@@ -1,0 +1,512 @@
+import Foundation
+import Testing
+
+@testable import VoiceInputCore
+
+@MainActor
+@Suite("Dictation coordinator")
+struct DictationCoordinatorTests {
+    /// Everything the pipeline touches, wired to fakes.
+    private struct Harness {
+        let audio: FakeAudioCapture
+        let provider: FakeLLMProvider
+        let output: FakeOutputSink
+        let secrets: InMemorySecretStore
+        let settingsStore: InMemorySettingsStore
+        let feedback: RecordingFeedbackPresenter
+        let coordinator: DictationCoordinator
+    }
+
+    /// Lets background pipeline tasks run until `condition` holds, without
+    /// making the test depend on wall-clock timing.
+    private static func yieldUntil(
+        attempts: Int = 200,
+        _ condition: () -> Bool
+    ) async {
+        var remaining = attempts
+        while !condition(), remaining > 0 {
+            await Task.yield()
+            remaining -= 1
+        }
+    }
+
+    private func makeHarness(
+        settings: AppSettings = AppSettings(),
+        engine: FakeTranscriptionEngine = FakeTranscriptionEngine(transcript: "えーっと 生の書き起こし"),
+        apiKey: String? = "sk-test",
+        reply: String = "整形されたテキスト。",
+        llmError: VoiceInputError? = nil,
+        audio: FakeAudioCapture = FakeAudioCapture()
+    ) -> Harness {
+        let provider = FakeLLMProvider(reply: reply, error: llmError)
+        let output = FakeOutputSink()
+        let secrets = InMemorySecretStore(
+            apiKey.map { [SecretKey.apiKey(for: .openAI): $0] } ?? [:]
+        )
+        let settingsStore = InMemorySettingsStore(settings)
+        let feedback = RecordingFeedbackPresenter()
+
+        let coordinator = DictationCoordinator(
+            audio: audio,
+            engines: StaticEngineResolver(engines: [engine]),
+            providers: LLMProviderRegistry(all: [provider]),
+            actions: .live,
+            settingsStore: settingsStore,
+            secrets: secrets,
+            output: output,
+            feedback: feedback
+        )
+        coordinator.finishedStateDuration = .zero
+
+        return Harness(
+            audio: audio,
+            provider: provider,
+            output: output,
+            secrets: secrets,
+            settingsStore: settingsStore,
+            feedback: feedback,
+            coordinator: coordinator
+        )
+    }
+
+    // MARK: Happy path
+
+    @Test("start → record → stop → format → copy → history")
+    func happyPath() async throws {
+        let harness = makeHarness()
+        let coordinator = harness.coordinator
+
+        #expect(coordinator.state == .idle)
+
+        coordinator.start()
+        await coordinator.waitUntilIdle()
+        #expect(coordinator.state == .recording)
+        #expect(harness.audio.startCount == 1)
+
+        coordinator.stopAndProcess()
+        await coordinator.waitUntilIdle()
+
+        #expect(coordinator.state == .idle)
+        #expect(harness.audio.stopCount == 1)
+        #expect(harness.output.copiedTexts == ["整形されたテキスト。"])
+        #expect(harness.output.pastedTexts.isEmpty)
+        #expect(coordinator.history.count == 1)
+        #expect(coordinator.history.first?.rawText == "えーっと 生の書き起こし")
+        #expect(coordinator.history.first?.formattedText == "整形されたテキスト。")
+        #expect(coordinator.partialText.isEmpty)
+        #expect(coordinator.inputLevel == 0)
+        #expect(
+            harness.feedback.events == [.recordingStarted, .recordingStopped, .finished]
+        )
+    }
+
+    @Test("toggle starts then stops")
+    func toggle() async throws {
+        let harness = makeHarness()
+        let coordinator = harness.coordinator
+
+        coordinator.toggle()
+        await coordinator.waitUntilIdle()
+        #expect(coordinator.state == .recording)
+
+        coordinator.toggle()
+        await coordinator.waitUntilIdle()
+        #expect(coordinator.state == .idle)
+        #expect(harness.output.copiedTexts.count == 1)
+    }
+
+    @Test("partials are mirrored into partialText while recording")
+    func partials() async throws {
+        let harness = makeHarness(
+            engine: FakeTranscriptionEngine(
+                transcript: "最終結果",
+                partials: ["こん", "こんにちは"]
+            )
+        )
+        let coordinator = harness.coordinator
+
+        coordinator.start()
+        await coordinator.waitUntilIdle()
+        await Self.yieldUntil { coordinator.partialText == "こんにちは" }
+        #expect(coordinator.partialText == "こんにちは")
+    }
+
+    @Test("audio buffers reach the session and drive the level meter")
+    func buffersForwarded() async throws {
+        let audio = FakeAudioCapture(scriptedBuffers: [FakeAudioCapture.tone(seconds: 0.25)])
+        let harness = makeHarness(audio: audio)
+        let coordinator = harness.coordinator
+
+        coordinator.start()
+        await coordinator.waitUntilIdle()
+        await Self.yieldUntil { coordinator.inputLevel > 0 }
+        #expect(coordinator.inputLevel > 0)
+
+        coordinator.stopAndProcess()
+        await coordinator.waitUntilIdle()
+        #expect(coordinator.state == .idle)
+    }
+
+    @Test("formattingEnabled = false skips the LLM entirely")
+    func rawFallback() async throws {
+        var settings = AppSettings()
+        settings.formattingEnabled = false
+        let harness = makeHarness(settings: settings, apiKey: nil)
+        let coordinator = harness.coordinator
+
+        coordinator.start()
+        await coordinator.waitUntilIdle()
+        coordinator.stopAndProcess()
+        await coordinator.waitUntilIdle()
+
+        #expect(coordinator.state == .idle)
+        #expect(harness.provider.requests.isEmpty)
+        #expect(harness.output.copiedTexts == ["えーっと 生の書き起こし"])
+    }
+
+    @Test("autoPaste pastes as well as copies")
+    func autoPaste() async throws {
+        var settings = AppSettings()
+        settings.autoPasteEnabled = true
+        let harness = makeHarness(settings: settings)
+        let coordinator = harness.coordinator
+
+        coordinator.start()
+        await coordinator.waitUntilIdle()
+        coordinator.stopAndProcess()
+        await coordinator.waitUntilIdle()
+
+        #expect(harness.output.copiedTexts == ["整形されたテキスト。"])
+        #expect(harness.output.pastedTexts == ["整形されたテキスト。"])
+    }
+
+    @Test("history honours the configured limit")
+    func historyLimit() async throws {
+        var settings = AppSettings()
+        settings.historyLimit = 2
+        let harness = makeHarness(settings: settings)
+        let coordinator = harness.coordinator
+
+        for _ in 0..<3 {
+            coordinator.start()
+            await coordinator.waitUntilIdle()
+            coordinator.stopAndProcess()
+            await coordinator.waitUntilIdle()
+        }
+        #expect(coordinator.history.count == 2)
+    }
+
+    @Test("lowering the history limit trims what is already retained")
+    func historyLimitAppliesImmediately() async throws {
+        let harness = makeHarness()
+        let coordinator = harness.coordinator
+
+        for _ in 0..<3 {
+            coordinator.start()
+            await coordinator.waitUntilIdle()
+            coordinator.stopAndProcess()
+            await coordinator.waitUntilIdle()
+        }
+        #expect(coordinator.history.count == 3)
+
+        coordinator.settings.historyLimit = 1
+        #expect(coordinator.history.count == 1)
+
+        coordinator.settings.historyLimit = 0
+        #expect(coordinator.history.isEmpty)
+    }
+
+    // MARK: Preflight
+
+    /// Reference box so a `@Sendable` hook can report back into the test.
+    private final class Box<T>: @unchecked Sendable {
+        var value: T
+        init(_ value: T) { self.value = value }
+    }
+
+    @Test("preflight runs before recording starts")
+    func preflightRunsFirst() async throws {
+        let harness = makeHarness()
+        let coordinator = harness.coordinator
+        let ran = Box(false)
+        coordinator.preflight = { ran.value = true }
+
+        coordinator.start()
+        await coordinator.waitUntilIdle()
+
+        #expect(ran.value)
+        #expect(coordinator.state == .recording)
+    }
+
+    @Test("a preflight failure surfaces as that error and copies nothing")
+    func preflightFailureStopsCapture() async throws {
+        let harness = makeHarness()
+        let coordinator = harness.coordinator
+        coordinator.preflight = { throw VoiceInputError.microphonePermissionDenied }
+
+        coordinator.start()
+        await coordinator.waitUntilIdle()
+
+        #expect(coordinator.state == .failed(.microphonePermissionDenied))
+        #expect(harness.output.copiedTexts.isEmpty)
+    }
+
+    /// Records the context it is handed, so the test can assert on what the
+    /// coordinator built.
+    private final class ContextSpyAction: VoiceAction, @unchecked Sendable {
+        let id = VoiceActionID.format
+        let displayName = "spy"
+        let requiresLLM = false
+        var seenFrontmostAppName: String?
+
+        func run(transcript: Transcript, context: ActionContext) async throws -> ActionOutcome {
+            seenFrontmostAppName = context.frontmostAppName
+            return ActionOutcome(text: transcript.text)
+        }
+    }
+
+    @Test("the frontmost app name reaches the action context")
+    func frontmostAppNameIsForwarded() async throws {
+        let spy = ContextSpyAction()
+        let coordinator = DictationCoordinator(
+            audio: FakeAudioCapture(),
+            engines: StaticEngineResolver(engines: [FakeTranscriptionEngine(transcript: "テスト")]),
+            providers: LLMProviderRegistry(all: []),
+            actions: ActionRegistry(actions: [spy]),
+            settingsStore: InMemorySettingsStore(AppSettings()),
+            secrets: InMemorySecretStore([:]),
+            output: FakeOutputSink()
+        )
+        coordinator.finishedStateDuration = .zero
+        coordinator.frontmostAppNameProvider = { "Slack" }
+
+        coordinator.start()
+        await coordinator.waitUntilIdle()
+        coordinator.stopAndProcess()
+        await coordinator.waitUntilIdle()
+
+        #expect(spy.seenFrontmostAppName == "Slack")
+    }
+
+    // MARK: Cancel
+
+    @Test("cancel returns to idle and copies nothing")
+    func cancel() async throws {
+        let harness = makeHarness()
+        let coordinator = harness.coordinator
+
+        coordinator.start()
+        await coordinator.waitUntilIdle()
+        #expect(coordinator.state == .recording)
+
+        coordinator.cancel()
+        await coordinator.waitUntilIdle()
+
+        #expect(coordinator.state == .idle)
+        #expect(harness.output.copiedTexts.isEmpty)
+        #expect(harness.output.pastedTexts.isEmpty)
+        #expect(coordinator.history.isEmpty)
+        #expect(coordinator.partialText.isEmpty)
+        #expect(harness.provider.requests.isEmpty)
+        #expect(harness.feedback.events.last == .cancelled)
+
+        // …and the machine is reusable afterwards.
+        coordinator.start()
+        await coordinator.waitUntilIdle()
+        #expect(coordinator.state == .recording)
+    }
+
+    @Test("cancel from idle is a no-op that stays idle")
+    func cancelFromIdle() async throws {
+        let coordinator = makeHarness().coordinator
+        coordinator.cancel()
+        #expect(coordinator.state == .idle)
+    }
+
+    // MARK: Failures
+
+    @Test("a missing API key surfaces as .failed(.missingAPIKey)")
+    func missingAPIKey() async throws {
+        let harness = makeHarness(apiKey: nil)
+        let coordinator = harness.coordinator
+
+        coordinator.start()
+        await coordinator.waitUntilIdle()
+        coordinator.stopAndProcess()
+        await coordinator.waitUntilIdle()
+
+        #expect(coordinator.state == .failed(.missingAPIKey(.openAI)))
+        #expect(harness.output.copiedTexts.isEmpty)
+        #expect(coordinator.history.isEmpty)
+        #expect(harness.feedback.events.contains(.failed))
+    }
+
+    @Test("an unavailable engine fails during preparation")
+    func engineUnavailable() async throws {
+        let harness = makeHarness(
+            engine: FakeTranscriptionEngine(
+                availability: EngineAvailability(
+                    status: .needsPermission,
+                    detail: "マイクの許可が必要です"
+                )
+            )
+        )
+        let coordinator = harness.coordinator
+
+        coordinator.start()
+        await coordinator.waitUntilIdle()
+
+        guard case let .failed(error) = coordinator.state else {
+            Issue.record("expected .failed, got \(coordinator.state)")
+            return
+        }
+        guard case let .engineUnavailable(_, detail) = error else {
+            Issue.record("expected .engineUnavailable, got \(error)")
+            return
+        }
+        #expect(detail == "マイクの許可が必要です")
+        #expect(harness.audio.startCount == 0)
+    }
+
+    @Test("an unregistered engine id fails rather than hanging")
+    func unknownEngine() async throws {
+        var settings = AppSettings()
+        settings.transcriptionEngine = .appleSpeechAnalyzer
+        let harness = makeHarness(settings: settings)
+        let coordinator = harness.coordinator
+
+        coordinator.start()
+        await coordinator.waitUntilIdle()
+
+        guard case .failed = coordinator.state else {
+            Issue.record("expected .failed, got \(coordinator.state)")
+            return
+        }
+    }
+
+    @Test("a provider error is wrapped and does not copy anything")
+    func providerFailure() async throws {
+        let harness = makeHarness(
+            llmError: .providerHTTPError(provider: "OpenAI", status: 500, body: "boom")
+        )
+        let coordinator = harness.coordinator
+
+        coordinator.start()
+        await coordinator.waitUntilIdle()
+        coordinator.stopAndProcess()
+        await coordinator.waitUntilIdle()
+
+        #expect(
+            coordinator.state
+                == .failed(.providerHTTPError(provider: "OpenAI", status: 500, body: "boom"))
+        )
+        #expect(harness.output.copiedTexts.isEmpty)
+    }
+
+    @Test("a non-VoiceInputError is wrapped rather than escaping")
+    func errorWrapping() {
+        struct Boom: Error {}
+        #expect(VoiceInputError.wrapping(Boom()) != .cancelled)
+        #expect(VoiceInputError.wrapping(VoiceInputError.emptyTranscript) == .emptyTranscript)
+        #expect(VoiceInputError.wrapping(CancellationError()) == .cancelled)
+        #expect(
+            VoiceInputError.wrapping(URLError(.notConnectedToInternet))
+                == .networkFailure(URLError(.notConnectedToInternet).localizedDescription)
+        )
+    }
+
+    // MARK: Ordering guards
+
+    @Test("a second start while recording is ignored")
+    func doubleStart() async throws {
+        let harness = makeHarness()
+        let coordinator = harness.coordinator
+
+        coordinator.start()
+        coordinator.start()
+        await coordinator.waitUntilIdle()
+        coordinator.start()
+        await coordinator.waitUntilIdle()
+
+        #expect(harness.audio.startCount == 1)
+        #expect(coordinator.state == .recording)
+    }
+
+    @Test("stop before start is ignored")
+    func stopWithoutStart() async throws {
+        let harness = makeHarness()
+        let coordinator = harness.coordinator
+
+        coordinator.stopAndProcess()
+        await coordinator.waitUntilIdle()
+
+        #expect(coordinator.state == .idle)
+        #expect(harness.audio.stopCount == 0)
+        #expect(harness.output.copiedTexts.isEmpty)
+    }
+
+    @Test("a stop issued while the engine is still opening still completes")
+    func stopWhilePreparing() async throws {
+        let harness = makeHarness()
+        let coordinator = harness.coordinator
+
+        coordinator.start()
+        // No await: the engine is still being opened.
+        coordinator.stopAndProcess()
+        await coordinator.waitUntilIdle()
+        await coordinator.waitUntilIdle()
+
+        #expect(coordinator.state == .idle)
+        #expect(harness.output.copiedTexts == ["整形されたテキスト。"])
+    }
+
+    @Test("a second stop while transcribing is ignored")
+    func doubleStop() async throws {
+        let harness = makeHarness()
+        let coordinator = harness.coordinator
+
+        coordinator.start()
+        await coordinator.waitUntilIdle()
+        coordinator.stopAndProcess()
+        coordinator.stopAndProcess()
+        await coordinator.waitUntilIdle()
+
+        #expect(harness.audio.stopCount == 1)
+        #expect(harness.output.copiedTexts.count == 1)
+    }
+
+    // MARK: Settings
+
+    @Test("assigning settings persists through the store")
+    func settingsPersist() async throws {
+        let harness = makeHarness()
+        let coordinator = harness.coordinator
+
+        #expect(coordinator.settings.localeIdentifier == "ja-JP")
+        coordinator.settings.localeIdentifier = "en-US"
+
+        #expect(coordinator.settings.localeIdentifier == "en-US")
+        #expect(harness.settingsStore.load().localeIdentifier == "en-US")
+    }
+
+    @Test("settings are loaded from the store at init")
+    func settingsLoaded() {
+        let harness = makeHarness(settings: AppSettings(localeIdentifier: "en-GB"))
+        #expect(harness.coordinator.settings.localeIdentifier == "en-GB")
+    }
+
+    @Test("playSounds = false silences feedback")
+    func silentFeedback() async throws {
+        var settings = AppSettings()
+        settings.playSounds = false
+        let harness = makeHarness(settings: settings)
+        let coordinator = harness.coordinator
+
+        coordinator.start()
+        await coordinator.waitUntilIdle()
+        coordinator.stopAndProcess()
+        await coordinator.waitUntilIdle()
+
+        #expect(harness.feedback.events.isEmpty)
+    }
+}

@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Info.plist TEMPLATE for the VoiceInput.app bundle.
+
+  Scripts/build_app.sh renders this file into build/VoiceInput.app/Contents/,
+  filling in the two version placeholders below (CFBundleShortVersionString from
+  the numeric part of `git describe`, CFBundleVersion from the full describe
+  string). The build fails if any placeholder is left unsubstituted. Do not edit
+  the rendered copy under build/ — it is regenerated on every build.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>VoiceInput</string>
+    <key>CFBundleDisplayName</key>
+    <string>VoiceInput</string>
+    <key>CFBundleIdentifier</key>
+    <string>io.github.voiceinput.VoiceInput</string>
+    <key>CFBundleExecutable</key>
+    <string>VoiceInput</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>ja</string>
+    <key>CFBundleShortVersionString</key>
+    <string>__VOICEINPUT_SHORT_VERSION__</string>
+    <key>CFBundleVersion</key>
+    <string>__VOICEINPUT_BUILD_VERSION__</string>
+
+    <!-- macOS 14 Sonoma or later. Must stay in sync with Package.swift platforms. -->
+    <key>LSMinimumSystemVersion</key>
+    <string>14.0</string>
+
+    <!-- Menu-bar-only agent: no Dock icon, no main window, no app switcher entry. -->
+    <key>LSUIElement</key>
+    <true/>
+
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSSupportsAutomaticTermination</key>
+    <false/>
+    <key>NSSupportsSuddenTermination</key>
+    <false/>
+
+    <!-- TCC prompts. macOS shows these strings verbatim; keep them honest. -->
+    <key>NSMicrophoneUsageDescription</key>
+    <string>音声入力のためにマイクを使用します。</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>音声をテキストに変換するために音声認識を使用します。</string>
+
+    <!--
+      Auto-paste uses the Accessibility (post-event) permission, which has no
+      Info.plist usage-description key on macOS — the user grants it in
+      System Settings → Privacy & Security → Accessibility. It is only requested
+      when auto-paste is enabled in Settings.
+    -->
+</dict>
+</plist>

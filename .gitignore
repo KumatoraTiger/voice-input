@@ -1,0 +1,60 @@
+# ---- Swift / SwiftPM ----
+.build/
+.swiftpm/
+# Package.resolved is intentionally NOT ignored: this is an application, so the
+# exact dependency revisions should be reproducible. (There are no dependencies
+# today, so the file does not exist yet.)
+*.o
+*.swiftmodule
+
+# ---- Build output ----
+build/
+DerivedData/
+*.app/
+
+# ---- Xcode ----
+*.xcuserstate
+*.xcuserdatad/
+xcuserdata/
+*.xcscmblueprint
+*.xccheckout
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# ---- macOS ----
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+
+# ---- Editors ----
+.vscode/
+.idea/
+*.swp
+
+# ---- Claude Code local overrides ----
+# .claude/settings.json and .claude/commands/ ARE committed on purpose.
+# Anything *.local.json is per-developer and must not be.
+.claude/settings.local.json
+.claude/*.local.json
+
+# ---- Secrets (defensive) --------------------------------------------------
+# This repository is PUBLIC. Nothing below may ever be committed.
+# API keys live in the macOS Keychain (service io.github.voiceinput.VoiceInput),
+# entered by each user in the app's Settings window. There is no .env in this
+# project — the entries below exist purely so an accidental one is never staged.
+.env
+.env.*
+*.env
+secrets*.json
+*secrets.json
+credentials.json
+*.pem
+*.p12
+*.key
+*.keystore
+*.mobileprovision
+*.cer

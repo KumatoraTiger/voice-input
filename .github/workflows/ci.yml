@@ -1,0 +1,124 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+# Least privilege: nothing in this workflow writes to the repository.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Main job: the configuration every contributor actually builds today.
+  # No Xcode-26 SDK, so SPEECH_ANALYZER stays off and the app compiles without
+  # the SpeechAnalyzer adapter.
+  # ---------------------------------------------------------------------------
+  build-and-test:
+    name: build · test · secrets (macOS 15)
+    runs-on: macos-15
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          swift --version
+          xcrun --show-sdk-version
+          sw_vers
+
+      - name: Check for leaked secrets
+        run: Scripts/check_secrets.sh --verbose
+
+      - name: Build all targets
+        run: swift build -v
+
+      - name: Run tests
+        run: swift test
+
+      - name: Lint (best effort)
+        run: Scripts/lint.sh
+
+      # Proves the bundle assembles end to end: Info.plist renders, the binary
+      # lands in Contents/MacOS, and codesign accepts it.
+      - name: Assemble VoiceInput.app
+        run: Scripts/build_app.sh
+
+      - name: Verify the bundle
+        run: |
+          set -euo pipefail
+          test -x build/VoiceInput.app/Contents/MacOS/VoiceInput
+          plutil -lint build/VoiceInput.app/Contents/Info.plist
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' \
+            build/VoiceInput.app/Contents/Info.plist
+          codesign --verify --verbose=2 build/VoiceInput.app
+
+  # ---------------------------------------------------------------------------
+  # SpeechAnalyzer job.
+  #
+  # SpeechAnalyzer only exists in the macOS 26 SDK, so the #if SPEECH_ANALYZER
+  # code in VoiceInputPlatform is not compiled by the job above at all. This job
+  # selects the newest Xcode on the runner and, if its SDK is >= 26, builds with
+  # VOICEINPUT_SPEECH_ANALYZER=1 so that code gets type-checked somewhere.
+  #
+  # runs-on macos-latest rather than a pinned macos-26 label on purpose: an
+  # unrecognised runner label leaves the job queued instead of failing fast, and
+  # continue-on-error cannot rescue a job that never starts. macos-latest always
+  # resolves, and the SDK check below decides whether there is anything to do.
+  #
+  # continue-on-error: GitHub's hosted images may not offer an SDK 26 toolchain
+  # yet (and the newest Xcode on an image changes without notice). A missing SDK
+  # must not turn the pipeline red — this job is an early-warning signal, not a
+  # gate. Once an SDK-26 image is generally available, pin the label and drop
+  # continue-on-error so this becomes a required check.
+  # ---------------------------------------------------------------------------
+  speech-analyzer:
+    name: build with SPEECH_ANALYZER (macOS 26 SDK, best effort)
+    runs-on: macos-latest
+    continue-on-error: true
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select the newest available Xcode
+        run: |
+          set -euo pipefail
+          ls /Applications | grep -i '^Xcode' || true
+          newest="$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -n 1 || true)"
+          if [ -n "${newest}" ]; then
+            sudo xcode-select -s "${newest}/Contents/Developer"
+          fi
+          xcrun --show-sdk-version
+
+      - name: Skip unless the SDK is macOS 26 or newer
+        id: sdk
+        run: |
+          set -euo pipefail
+          sdk="$(xcrun --show-sdk-version)"
+          major="${sdk%%.*}"
+          echo "sdk=${sdk}" >> "$GITHUB_OUTPUT"
+          if [ "${major}" -ge 26 ] 2>/dev/null; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::SDK ${sdk} predates 26; SPEECH_ANALYZER code was not compiled."
+          fi
+
+      - name: Build with SPEECH_ANALYZER enabled
+        if: steps.sdk.outputs.ok == 'true'
+        env:
+          VOICEINPUT_SPEECH_ANALYZER: "1"
+        run: |
+          swift build -v
+          swift test
+
+      - name: Assemble the bundle with SpeechAnalyzer support
+        if: steps.sdk.outputs.ok == 'true'
+        run: Scripts/build_app.sh
