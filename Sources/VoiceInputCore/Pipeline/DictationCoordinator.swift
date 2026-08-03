@@ -58,6 +58,14 @@ public final class DictationCoordinator {
     /// action can adapt to its target. Set by the app layer; nil in tests.
     public var frontmostAppNameProvider: (@MainActor @Sendable () -> String?)?
 
+    /// Reads the frontmost window so the LLM can fix misrecognised names.
+    /// Consulted only when `AppSettings.screenContextEnabled` is on; nil in tests.
+    public var screenContextProvider: (any ScreenContextProviding)?
+
+    /// How long a finished dictation waits for the screen read that started with
+    /// it. Recording normally covers the whole cost; this only bounds a stall.
+    public var screenContextTimeout: Duration = .seconds(3)
+
     /// How long `.finished` lingers before returning to `.idle`, so the HUD has
     /// something to show. Tests set this to zero.
     public var finishedStateDuration: Duration = .milliseconds(800)
@@ -87,6 +95,7 @@ public final class DictationCoordinator {
     @ObservationIgnored private var captureTask: Task<Void, Never>?
     @ObservationIgnored private var partialsTask: Task<Void, Never>?
     @ObservationIgnored private var capturedFrontmostAppName: String?
+    @ObservationIgnored private var screenContextTask: Task<ScreenContext, Never>?
 
     private static let log = Logger(subsystem: "io.github.voiceinput", category: "pipeline")
 
@@ -210,6 +219,7 @@ public final class DictationCoordinator {
         partialText = ""
         inputLevel = 0
         styleOverrideID = nil
+        screenContextTask = nil
         state = .idle
         notify(.cancelled)
     }
@@ -225,6 +235,9 @@ public final class DictationCoordinator {
     private func beginCapture() async {
         do {
             capturedFrontmostAppName = frontmostAppNameProvider?()
+            // Kick the screen read off now rather than at stop: it then runs
+            // alongside the recording and costs the user no perceptible wait.
+            beginScreenContextCapture()
             try await preflight?()
             let engine = try resolveEngine()
             let engineID = engine.id
@@ -323,7 +336,7 @@ public final class DictationCoordinator {
 
             let outcome = try await action.run(
                 transcript: transcript,
-                context: makeContext(for: action)
+                context: await makeContext(for: action)
             )
 
             if outcome.copyToClipboard {
@@ -386,11 +399,12 @@ public final class DictationCoordinator {
         (id == .format && !settings.formattingEnabled) ? .raw : id
     }
 
-    private func makeContext(for action: any VoiceAction) -> ActionContext {
+    private func makeContext(for action: any VoiceAction) async -> ActionContext {
         // The override travels as a *copy* of the settings, never through the
         // store: a style picked for one dictation must not become the default.
         let settings = settings.selectingStyle(styleOverrideID)
         guard action.requiresLLM else {
+            // No LLM call, so nothing could use the screen even if it were read.
             return ActionContext(settings: settings, frontmostAppName: capturedFrontmostAppName)
         }
         let provider = providers.provider(for: settings.llmProvider)
@@ -399,8 +413,36 @@ public final class DictationCoordinator {
             settings: settings,
             llm: provider,
             apiKey: key,
-            frontmostAppName: capturedFrontmostAppName
+            frontmostAppName: capturedFrontmostAppName,
+            screenContext: await finishScreenContextCapture()
         )
+    }
+
+    /// Starts reading the screen, if the user asked for that. Any read still in
+    /// flight from a previous dictation is dropped.
+    private func beginScreenContextCapture() {
+        screenContextTask = nil
+        guard settings.screenContextEnabled, let provider = screenContextProvider else { return }
+        // Only look when the action in flight will actually consult the terms, so
+        // the screen is never *read* rather than merely unused. That covers 整形オフ
+        // (which resolves to `RawAction`) and asking a question, which needs the LLM
+        // but has nothing to do with what is on screen.
+        guard
+            actions.action(for: effectiveActionID(currentAction))?.usesScreenContext == true
+        else { return }
+
+        let timeout = screenContextTimeout
+        screenContextTask = Task {
+            await withDeadline(timeout, fallback: ScreenContext.empty) {
+                await provider.currentContext()
+            }
+        }
+    }
+
+    private func finishScreenContextCapture() async -> ScreenContext? {
+        guard let screenContextTask else { return nil }
+        self.screenContextTask = nil
+        return await screenContextTask.value
     }
 
     /// Applies `historyLimit` to what is already retained, so lowering the limit in
@@ -448,6 +490,7 @@ public final class DictationCoordinator {
         }
         inputLevel = 0
         styleOverrideID = nil
+        screenContextTask = nil
 
         if wrapped == .cancelled {
             state = .idle

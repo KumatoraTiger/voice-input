@@ -25,6 +25,7 @@ public enum PrivacyPane: String, Sendable, CaseIterable {
     case microphone = "Privacy_Microphone"
     case speechRecognition = "Privacy_SpeechRecognition"
     case accessibility = "Privacy_Accessibility"
+    case screenRecording = "Privacy_ScreenCapture"
 
     var url: URL? {
         URL(string: "x-apple.systempreferences:com.apple.preference.security?\(rawValue)")
@@ -43,11 +44,15 @@ public final class PermissionsService {
     public private(set) var speechRecognition: PermissionStatus
     /// Accessibility has no "not determined" state: the process is trusted or not.
     public private(set) var accessibility: PermissionStatus
+    /// Same shape as accessibility — granted or not, never "not determined".
+    /// Only consulted when the user turns on screen context.
+    public private(set) var screenRecording: PermissionStatus
 
     public init() {
         microphone = Self.microphoneStatus()
         speechRecognition = Self.speechRecognitionStatus()
         accessibility = Self.accessibilityStatus()
+        screenRecording = Self.screenRecordingStatus()
     }
 
     /// Re-reads all three from the system. Cheap; call it when Settings appears or
@@ -56,6 +61,7 @@ public final class PermissionsService {
         microphone = Self.microphoneStatus()
         speechRecognition = Self.speechRecognitionStatus()
         accessibility = Self.accessibilityStatus()
+        screenRecording = Self.screenRecordingStatus()
     }
 
     // MARK: - Requests
@@ -100,6 +106,15 @@ public final class PermissionsService {
         return accessibility
     }
 
+    /// Shows the system screen-recording prompt. Nothing calls this unless the
+    /// user turns screen context on — that switch is the consent moment.
+    @discardableResult
+    public func promptForScreenRecording() -> PermissionStatus {
+        _ = CGRequestScreenCaptureAccess()
+        screenRecording = Self.screenRecordingStatus()
+        return screenRecording
+    }
+
     // MARK: - System Settings deep links
 
     public func openSettings(for pane: PrivacyPane) {
@@ -110,6 +125,7 @@ public final class PermissionsService {
     public func openMicrophoneSettings() { openSettings(for: .microphone) }
     public func openSpeechRecognitionSettings() { openSettings(for: .speechRecognition) }
     public func openAccessibilitySettings() { openSettings(for: .accessibility) }
+    public func openScreenRecordingSettings() { openSettings(for: .screenRecording) }
 
     // MARK: - Live probes (isolation-free)
 
@@ -135,6 +151,11 @@ public final class PermissionsService {
 
     public nonisolated static func accessibilityStatus() -> PermissionStatus {
         AXIsProcessTrusted() ? .granted : .denied
+    }
+
+    /// Preflight rather than request: reading the state must never pop a dialog.
+    public nonisolated static func screenRecordingStatus() -> PermissionStatus {
+        CGPreflightScreenCaptureAccess() ? .granted : .denied
     }
 
     /// Bridges the last completion-handler API in this file so nothing else has to.

@@ -13,6 +13,8 @@ enum PromptFence {
     static let all: [(tag: String, replacement: String)] = [
         (FormattingPromptBuilder.closingTag, "[/transcript]"),
         (FormattingPromptBuilder.openingTag, "[transcript]"),
+        (FormattingPromptBuilder.screenClosingTag, "[/screen_terms]"),
+        (FormattingPromptBuilder.screenOpeningTag, "[screen_terms]"),
         (AskPromptBuilder.closingTag, "[/question]"),
         (AskPromptBuilder.openingTag, "[question]"),
     ]

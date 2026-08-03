@@ -86,6 +86,22 @@ public enum HotkeyMode: String, Codable, Sendable, CaseIterable {
     case pushToTalk
 }
 
+/// Settings for reading the frontmost window to help the LLM fix misrecognised
+/// names. See `ScreenContext`.
+///
+/// A struct rather than a lone `Bool` so the feature can grow knobs without
+/// adding more top-level keys — and, being `Optional` on `AppSettings`, so that
+/// settings written before the feature existed still decode.
+public struct ScreenContextSettings: Codable, Sendable, Equatable {
+    /// Off unless the user turns it on. Turning it on is what triggers the
+    /// screen-recording permission prompt; nothing asks for it otherwise.
+    public var isEnabled: Bool
+
+    public init(isEnabled: Bool = false) {
+        self.isEnabled = isEnabled
+    }
+}
+
 /// Everything persisted for the user. **Never contains secrets** — API keys live in
 /// the Keychain via `SecretStore`. This type is safe to log, export, and diff.
 public struct AppSettings: Codable, Sendable, Equatable {
@@ -120,6 +136,14 @@ public struct AppSettings: Codable, Sendable, Equatable {
     public var askModels: [LLMProviderID: String]
     public var askAnswerStyle: AskAnswerStyle
 
+    // MARK: Screen context
+    /// `nil` means the user has never touched the feature, which reads as off.
+    ///
+    /// Optional carries that meaning, rather than guarding decoding: `init(from:)`
+    /// decodes every field with a fallback, so a *required* new key would no longer
+    /// reset anyone's configuration either way.
+    public var screenContext: ScreenContextSettings?
+
     // MARK: Output
     public var autoPasteEnabled: Bool
     public var playSounds: Bool
@@ -144,6 +168,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
         askHotkey: HotkeyBinding? = nil,
         askModels: [LLMProviderID: String] = [:],
         askAnswerStyle: AskAnswerStyle = .concise,
+        screenContext: ScreenContextSettings? = nil,
         autoPasteEnabled: Bool = false,
         playSounds: Bool = true,
         historyLimit: Int = 20,
@@ -163,6 +188,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
         self.askHotkey = askHotkey
         self.askModels = askModels
         self.askAnswerStyle = askAnswerStyle
+        self.screenContext = screenContext
         self.autoPasteEnabled = autoPasteEnabled
         self.playSounds = playSounds
         self.historyLimit = historyLimit
@@ -172,6 +198,17 @@ public struct AppSettings: Codable, Sendable, Equatable {
     }
 
     public var locale: Locale { Locale(identifier: localeIdentifier) }
+
+    /// Non-optional view of `screenContext`, so call sites and SwiftUI bindings
+    /// never have to spell the migration detail.
+    public var screenContextEnabled: Bool {
+        get { screenContext?.isEnabled ?? false }
+        set {
+            var value = screenContext ?? ScreenContextSettings()
+            value.isEnabled = newValue
+            screenContext = value
+        }
+    }
 
     public var activeStyle: FormattingStyle? {
         guard let activeStyleID else { return styles.first }
@@ -237,6 +274,10 @@ extension AppSettings {
             askHotkey: try container.decodeIfPresent(HotkeyBinding.self, forKey: .askHotkey),
             askModels: try decode(.askModels, or: fallback.askModels),
             askAnswerStyle: try decode(.askAnswerStyle, or: fallback.askAnswerStyle),
+            screenContext: try container.decodeIfPresent(
+                ScreenContextSettings.self,
+                forKey: .screenContext
+            ),
             autoPasteEnabled: try decode(.autoPasteEnabled, or: fallback.autoPasteEnabled),
             playSounds: try decode(.playSounds, or: fallback.playSounds),
             historyLimit: try decode(.historyLimit, or: fallback.historyLimit),

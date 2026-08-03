@@ -125,6 +125,11 @@ final class AppEnvironment {
         coordinator.frontmostAppNameProvider = {
             NSWorkspace.shared.frontmostApplication?.localizedName
         }
+        // Always injected; the coordinator only calls it when the user has turned
+        // screen context on, so wiring it costs nothing while the feature is off.
+        coordinator.screenContextProvider = ScreenCaptureContextProvider(
+            locale: coordinator.settings.locale
+        )
     }
 
     /// The production graph: Keychain, `UserDefaults`, real microphone, real
@@ -261,15 +266,33 @@ final class AppEnvironment {
             _ = settings.styles
             _ = settings.playSounds
             _ = settings.launchAtLogin
+            // The OCR provider is built around a locale, so it is rebuilt when
+            // the dictation language changes.
+            _ = settings.localeIdentifier
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.applyHotkey()
                 self.applySoundSetting()
                 self.applyLoginItem()
+                self.applyScreenContextProvider()
                 self.observeSettings()
             }
         }
+    }
+
+    private func applyScreenContextProvider() {
+        coordinator.screenContextProvider = ScreenCaptureContextProvider(
+            locale: coordinator.settings.locale
+        )
+    }
+
+    /// Turning the setting on is the consent moment, so this is the only place
+    /// that asks for the screen-recording permission.
+    func setScreenContextEnabled(_ isEnabled: Bool) {
+        coordinator.settings.screenContextEnabled = isEnabled
+        guard isEnabled, permissions.screenRecording != .granted else { return }
+        permissions.promptForScreenRecording()
     }
 
     private func observeState() {

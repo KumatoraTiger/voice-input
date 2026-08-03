@@ -150,6 +150,56 @@ struct SettingsStoreTests {
         #expect(loaded.askAnswerStyle == .concise)
     }
 
+    /// Same hazard as `stylesWithoutHotkeyStillDecode`, one release later: a
+    /// required `screenContext` key would have reset every existing install.
+    @Test("settings saved before screen context existed still load, and read as off")
+    func settingsWithoutScreenContextStillDecode() throws {
+        let (defaults, suite) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        var settings = AppSettings()
+        settings.localeIdentifier = "en-US"
+        settings.screenContextEnabled = true
+        let encoded = try JSONEncoder().encode(settings)
+        var object = try #require(
+            try JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        #expect(object["screenContext"] != nil)
+        object.removeValue(forKey: "screenContext")
+        defaults.set(
+            try JSONSerialization.data(withJSONObject: object),
+            forKey: UserDefaultsSettingsStore.defaultKey
+        )
+
+        let loaded = UserDefaultsSettingsStore(defaults: defaults).load()
+
+        #expect(loaded.localeIdentifier == "en-US")
+        #expect(loaded.screenContextEnabled == false)
+    }
+
+    /// The tolerant decoder has to carry the *newest* field too. Left out of
+    /// `init(from:)`, `screenContext` would round-trip as nil and quietly turn the
+    /// feature off for anyone who had enabled it.
+    @Test("screen context survives a round trip through the tolerant decoder")
+    func screenContextRoundTrips() throws {
+        var settings = AppSettings()
+        settings.screenContextEnabled = true
+
+        let decoded = try JSONDecoder().decode(
+            AppSettings.self,
+            from: try JSONEncoder().encode(settings)
+        )
+
+        #expect(decoded.screenContextEnabled)
+        #expect(decoded.screenContext == settings.screenContext)
+    }
+
+    @Test("screen context is off in a fresh install")
+    func screenContextDefaultsOff() {
+        #expect(AppSettings().screenContextEnabled == false)
+        #expect(AppSettings().screenContext == nil)
+    }
+
     /// The same tolerance, stated as a rule rather than for one release's fields.
     @Test("any single missing key falls back to its default, not to a wholesale reset")
     func anyMissingKeyFallsBackIndividually() throws {
