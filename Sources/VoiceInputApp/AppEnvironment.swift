@@ -13,6 +13,7 @@ enum SettingsTab: String, CaseIterable, Identifiable, Hashable {
     case general
     case transcription
     case formatting
+    case ask
     case apiKeys
     case permissions
 
@@ -23,6 +24,7 @@ enum SettingsTab: String, CaseIterable, Identifiable, Hashable {
         case .general: return "一般"
         case .transcription: return "音声認識"
         case .formatting: return "整形"
+        case .ask: return "質問"
         case .apiKeys: return "API キー"
         case .permissions: return "権限"
         }
@@ -33,6 +35,7 @@ enum SettingsTab: String, CaseIterable, Identifiable, Hashable {
         case .general: return "gearshape"
         case .transcription: return "waveform"
         case .formatting: return "text.badge.checkmark"
+        case .ask: return "questionmark.bubble"
         case .apiKeys: return "key"
         case .permissions: return "lock.shield"
         }
@@ -74,6 +77,8 @@ final class AppEnvironment {
     /// Per-style shortcut problems (duplicate combination, already taken by
     /// another app), keyed by style id and shown next to that style in Settings.
     var styleHotkeyIssues: [UUID: String] = [:]
+    /// Non-nil while the configured question shortcut could not be claimed.
+    var askHotkeyIssue: String?
     /// Non-nil when launch-at-login needs the user to do something.
     var loginItemNotice: String?
     /// The app that was frontmost when recording started, e.g. "Slack".
@@ -203,6 +208,14 @@ final class AppEnvironment {
         coordinator.toggle()
     }
 
+    /// Records a question instead of a dictation. Pressed while a dictation is
+    /// already running it converts that recording into a question — see
+    /// `DictationCoordinator.toggle`.
+    func toggleAsk() {
+        rememberFrontmostApp()
+        coordinator.toggle(action: .ask)
+    }
+
     /// Switches the style of the dictation in flight (from the HUD). One-off: the
     /// default style in Settings and the menu is untouched.
     func selectStyle(_ id: UUID) {
@@ -222,6 +235,12 @@ final class AppEnvironment {
         HotkeyFormatting.displayString(for: settings.hotkey)
     }
 
+    /// `nil` when no question shortcut is configured — the feature is opt-in, and
+    /// the menu says so rather than showing an empty key.
+    var askHotkeyLabel: String? {
+        settings.askHotkey.map(HotkeyFormatting.displayString(for:))
+    }
+
     // MARK: - Observation
 
     /// `withObservationTracking` fires once per change, so every handler re-arms
@@ -232,6 +251,7 @@ final class AppEnvironment {
             let settings = coordinator.settings
             _ = settings.hotkey
             _ = settings.hotkeyMode
+            _ = settings.askHotkey
             // Styles carry shortcuts of their own, so editing one can change what
             // has to be registered. `applyHotkey` compares the resulting plan, so
             // typing a prompt does not churn the registrations.
@@ -298,6 +318,12 @@ final class AppEnvironment {
                 error.errorDescription ?? "ショートカットキーを登録できませんでした。"
         }
         styleHotkeyIssues = issues
+
+        askHotkeyIssue =
+            plan.askRejection?.message(subject: "質問のショートカット")
+            ?? hotkeys.failures[.ask].map {
+                $0.errorDescription ?? "ショートカットキーを登録できませんでした。"
+            }
     }
 
     private func message(for error: HotkeyError, binding: HotkeyBinding) -> String {
@@ -317,19 +343,21 @@ final class AppEnvironment {
         applyHotkey(force: true)
     }
 
-    /// A style shortcut means "dictate with this style, just this once". Pressed
-    /// while a dictation is already running it switches that dictation's style
-    /// instead of starting or stopping one — see `DictationCoordinator.toggle`.
+    /// A style shortcut means "dictate with this style, just this once", and the
+    /// question shortcut means "this one is a question". Pressed while a recording is
+    /// already running, either switches that recording instead of starting or
+    /// stopping one — see `DictationCoordinator.toggle`.
     private func handleHotkeyPress(_ purpose: HotkeyPurpose) {
         rememberFrontmostApp()
         switch settings.hotkeyMode {
         case .toggle:
-            coordinator.toggle(styleID: purpose.styleID)
+            coordinator.toggle(action: purpose.actionID, styleID: purpose.styleID)
         case .pushToTalk:
-            if coordinator.isCapturing, let styleID = purpose.styleID {
-                coordinator.selectStyle(styleID)
+            if coordinator.isCapturing {
+                coordinator.selectAction(purpose.actionID)
+                if let styleID = purpose.styleID { coordinator.selectStyle(styleID) }
             } else {
-                coordinator.start(styleID: purpose.styleID)
+                coordinator.start(action: purpose.actionID, styleID: purpose.styleID)
             }
         }
     }

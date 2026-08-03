@@ -421,6 +421,107 @@ struct DictationCoordinatorTests {
         #expect(coordinator.effectiveStyleID == FormattingStyle.standardID)
     }
 
+    // MARK: Asking a question
+
+    @Test("the ask action answers the transcript and copies the answer")
+    func askHappyPath() async throws {
+        let harness = makeHarness(
+            engine: FakeTranscriptionEngine(transcript: "Swift の Sendable とは"),
+            reply: "並行処理で安全に渡せる型のことです。"
+        )
+        let coordinator = harness.coordinator
+
+        coordinator.start(action: .ask)
+        await coordinator.waitUntilIdle()
+        #expect(coordinator.currentAction == .ask)
+
+        coordinator.stopAndProcess()
+        await coordinator.waitUntilIdle()
+
+        #expect(coordinator.state == .idle)
+        #expect(harness.output.copiedTexts == ["並行処理で安全に渡せる型のことです。"])
+        #expect(
+            harness.provider.requests.first?.systemPrompt == AskPromptBuilder.systemPrompt
+        )
+        #expect(coordinator.history.first?.rawText == "Swift の Sendable とは")
+    }
+
+    @Test("formattingEnabled = false does not disable questions")
+    func askIgnoresFormattingToggle() async throws {
+        // The toggle means "do not rewrite my dictation"; a question the user
+        // explicitly asked for still has to reach the LLM.
+        var settings = AppSettings()
+        settings.formattingEnabled = false
+        let harness = makeHarness(settings: settings, reply: "答えです。")
+        let coordinator = harness.coordinator
+
+        coordinator.start(action: .ask)
+        await coordinator.waitUntilIdle()
+        coordinator.stopAndProcess()
+        await coordinator.waitUntilIdle()
+
+        #expect(harness.provider.requests.count == 1)
+        #expect(harness.output.copiedTexts == ["答えです。"])
+    }
+
+    @Test("the question shortcut pressed mid-dictation converts the recording")
+    func askShortcutSwitchesInFlight() async throws {
+        let harness = makeHarness(reply: "答えです。")
+        let coordinator = harness.coordinator
+
+        coordinator.toggle()
+        await coordinator.waitUntilIdle()
+        #expect(coordinator.currentAction == .format)
+
+        // Not a stop: pressing the other shortcut mid-sentence is a correction.
+        coordinator.toggle(action: .ask)
+        await coordinator.waitUntilIdle()
+        #expect(coordinator.state == .recording)
+        #expect(coordinator.currentAction == .ask)
+
+        // …and the same shortcut again does stop.
+        coordinator.toggle(action: .ask)
+        await coordinator.waitUntilIdle()
+        #expect(coordinator.state == .idle)
+        #expect(
+            harness.provider.requests.first?.systemPrompt == AskPromptBuilder.systemPrompt
+        )
+    }
+
+    @Test("the dictation shortcut turns a question back into a dictation")
+    func dictationShortcutSwitchesBack() async throws {
+        let harness = makeHarness()
+        let coordinator = harness.coordinator
+
+        coordinator.toggle(action: .ask)
+        await coordinator.waitUntilIdle()
+        coordinator.toggle()
+        await coordinator.waitUntilIdle()
+        #expect(coordinator.state == .recording)
+        #expect(coordinator.currentAction == .format)
+
+        coordinator.toggle()
+        await coordinator.waitUntilIdle()
+        #expect(coordinator.state == .idle)
+        #expect(
+            harness.provider.requests.first?.systemPrompt == FormattingPromptBuilder.systemPrompt
+        )
+    }
+
+    @Test("switching action outside a recording, or to an unknown one, is ignored")
+    func selectActionIsGuarded() async throws {
+        let harness = makeHarness()
+        let coordinator = harness.coordinator
+
+        coordinator.selectAction(.ask)
+        #expect(coordinator.currentAction == .format)
+
+        coordinator.start(action: .ask)
+        await coordinator.waitUntilIdle()
+        coordinator.selectAction(VoiceActionID(rawValue: "nope"))
+        #expect(coordinator.currentAction == .ask)
+    }
+
     // MARK: Cancel
 
     @Test("cancel returns to idle and copies nothing")

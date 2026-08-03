@@ -5,16 +5,29 @@ existing seam, not a rewrite.
 
 ## 1. Voice commands as a second `VoiceAction`
 
-The contracts already separate "capture and transcribe" from "what to do with the
-result" (`VoiceAction`, `ActionRegistry`, `VoiceActionID`). A `CommandAction` bound
-to its own hotkey could interpret the dictation as an instruction ("この文を英語に",
-"箇条書きにして") rather than as text to clean up.
+Half done: `AskAction` ships, bound to its own optional hotkey (設定 → 質問). It
+answers the dictation as a question and puts the answer on the clipboard — one call,
+no conversation state. It confirmed the seam works: a new action + a second
+`HotkeyBinding`, with capture and transcription untouched.
 
-- Ships as a new action + a second `HotkeyBinding`; capture and transcription do not
-  change.
-- **Constraint:** the transcript stays data. The set of permitted operations comes
-  from the app's configuration, and the model may only select among them — it may
-  never name an arbitrary command, path or URL. See `docs/SECURITY.md`.
+What remains is a `CommandAction` that *acts* rather than answers ("この文を英語に",
+"箇条書きにして" applied to something the user already has).
+
+- **Constraint, unchanged and the reason this half is still unbuilt:** the set of
+  permitted operations comes from the app's configuration, and the model may only
+  select among them — it may never name an arbitrary command, path or URL.
+  `AskAction` sidesteps this entirely by producing nothing but text; a command action
+  cannot. See the ask-action section of `docs/SECURITY.md` for where the current
+  boundary sits.
+
+Follow-ups the ask action deliberately left out:
+
+- **Multi-turn questions.** One recording is one question today. Follow-ups need
+  somewhere to *read* the previous answer, which means a window, which is a bigger
+  change to the App layer than the action itself was.
+- **A per-purpose provider.** The ask model is its own setting, but the provider is
+  shared with formatting. Splitting it means a second provider picker and a second
+  key path through `APIKeysModel`.
 
 ## 2. Per-app formatting styles
 

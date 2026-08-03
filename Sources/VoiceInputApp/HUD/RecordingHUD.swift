@@ -22,6 +22,9 @@ struct HUDStyleOption: Identifiable, Equatable {
 /// previewed in any phase without a microphone.
 struct RecordingHUD: View {
     let phase: HUDPhase
+    /// Dictation or question — changes the wording, and hides the style row for a
+    /// question, where a formatting style has nothing to do.
+    var mode: DictationMode = .dictation
     var partialText: String = ""
     var level: Float = 0
     var frontmostAppName: String?
@@ -48,7 +51,7 @@ struct RecordingHUD: View {
                     .accessibilityValue("\(Int(level * 100))%")
             }
             transcriptView
-            if phase.showsStylePicker, styles.count > 1 {
+            if mode == .dictation, phase.showsStylePicker, styles.count > 1 {
                 stylePicker
             }
             if case .failed(let error) = phase {
@@ -71,11 +74,11 @@ struct RecordingHUD: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            Image(systemName: phase.symbol)
+            Image(systemName: phase.symbol(mode))
                 .foregroundStyle(tint)
                 .imageScale(.medium)
                 .accessibilityHidden(true)
-            Text(phase.title)
+            Text(phase.title(mode))
                 .font(.headline)
             Spacer(minLength: 8)
             if case .finished(let summary) = phase, let summary {
@@ -101,7 +104,7 @@ struct RecordingHUD: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
         } else if phase.showsLevelMeter {
-            Text("話してください…")
+            Text(mode == .ask ? "質問を話してください…" : "話してください…")
                 .font(.callout)
                 .foregroundStyle(.tertiary)
         }
@@ -272,6 +275,13 @@ struct RecordingHUD_Previews: PreviewProvider {
                 showsEscapeHint: true
             )
             RecordingHUD(phase: .formatting, partialText: "整形前のテキスト", level: 0)
+            RecordingHUD(
+                phase: .recording,
+                mode: .ask,
+                partialText: "Swift で配列の重複を取り除く方法",
+                level: 0.4
+            )
+            RecordingHUD(phase: .formatting, mode: .ask)
             RecordingHUD(phase: .finished(summary: "gpt-4.1-mini · 0.8s"))
             RecordingHUD(phase: .failed(.missingAPIKey(.openAI)))
             RecordingHUD(phase: .failed(.microphonePermissionDenied))

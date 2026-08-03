@@ -10,6 +10,8 @@ public enum VoiceInputError: Error, Sendable, Equatable {
     case engineUnavailable(TranscriptionEngineID, String)
     case transcriptionFailed(String)
     case emptyTranscript
+    /// The question was heard but the model replied with nothing.
+    case emptyAnswer
     case missingAPIKey(LLMProviderID)
     case keychainFailure(String)
     /// Non-2xx from a provider. `body` is truncated and must never contain the key.
@@ -38,6 +40,7 @@ extension VoiceInputError {
         case .engineUnavailable(let id, _): return "engineUnavailable(\(id.rawValue))"
         case .transcriptionFailed: return "transcriptionFailed"
         case .emptyTranscript: return "emptyTranscript"
+        case .emptyAnswer: return "emptyAnswer"
         case .missingAPIKey(let provider): return "missingAPIKey(\(provider.rawValue))"
         case .keychainFailure: return "keychainFailure"
         case .providerHTTPError(let provider, let status, _):
@@ -67,6 +70,8 @@ extension VoiceInputError: LocalizedError {
             return "音声認識に失敗しました: \(detail)"
         case .emptyTranscript:
             return "音声を認識できませんでした。"
+        case .emptyAnswer:
+            return "回答が空でした。"
         case .missingAPIKey(let provider):
             return "\(provider.rawValue) の API キーが設定されていません。"
         case .keychainFailure(let detail):
@@ -93,6 +98,8 @@ extension VoiceInputError: LocalizedError {
             return "システム設定 → プライバシーとセキュリティ → アクセシビリティ で VoiceInput を許可してください。"
         case .missingAPIKey:
             return "設定 → API キー から設定してください。"
+        case .emptyAnswer:
+            return "もう一度質問するか、設定 → 質問 で別のモデルを試してください。"
         case .invalidModelName:
             return "設定 → 整形 でモデル名を確認してください。空欄にすると既定のモデルを使います。"
         default:

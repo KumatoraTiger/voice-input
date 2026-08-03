@@ -3,10 +3,15 @@
 Referenced from `Sources/VoiceInputCore/Contracts/Actions.swift`.
 Slash command: `/add-action`.
 
-A `VoiceAction` is "what happens to a finished transcript". Two ship today:
-`FormatAction` (LLM rewrite) and `RawAction` (pass-through, no key needed). The
-abstraction exists so voice *commands* can be added without touching capture or
-transcription.
+A `VoiceAction` is "what happens to a finished transcript". Three ship today:
+`FormatAction` (LLM rewrite), `RawAction` (pass-through, no key needed) and
+`AskAction` (answers the transcript as a question). The abstraction exists so voice
+*commands* can be added without touching capture or transcription.
+
+`AskAction` is the one worth reading before you add anything that treats speech as a
+request rather than as text: it shows where that licence has to stop, and
+`docs/SECURITY.md` explains why it is safe there and would not be for an action with
+a side effect.
 
 ## Steps
 

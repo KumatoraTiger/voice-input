@@ -20,12 +20,20 @@ struct MenuContent: View {
         }
         .disabled(isBusyBeyondRecording(state))
 
+        Button(askTitle(for: state)) {
+            environment.toggleAsk()
+        }
+        .disabled(isBusyBeyondRecording(state))
+
         if state.isBusy {
             Button("キャンセル") { environment.coordinator.cancel() }
         }
 
         if let hotkeyError = environment.hotkeyError {
             Text(hotkeyError.truncated(to: 80))
+        }
+        if let askIssue = environment.askHotkeyIssue {
+            Text("質問: \(askIssue.truncated(to: 70))")
         }
 
         Divider()
@@ -79,19 +87,40 @@ struct MenuContent: View {
         case .failed(let error):
             return "エラー: \((error.errorDescription ?? "失敗しました").truncated(to: 60))"
         case .finished:
-            return "完了 — クリップボードにコピーしました"
+            return mode == .ask
+                ? "完了 — 回答をクリップボードにコピーしました"
+                : "完了 — クリップボードにコピーしました"
         default:
-            return state.statusText
+            return state.statusText(mode)
         }
+    }
+
+    /// Dictation or question, as the coordinator currently has it.
+    private var mode: DictationMode {
+        DictationMode(action: environment.coordinator.currentAction)
     }
 
     private func startStopTitle(for state: DictationState) -> String {
         let shortcut = environment.hotkeyLabel
         switch state {
         case .recording, .preparing:
-            return "録音を停止（\(shortcut)）"
+            // Pressing this during a question switches back to a dictation rather
+            // than stopping, so the label has to say which it will do.
+            return mode == .ask ? "書き起こしに切り替え（\(shortcut)）" : "録音を停止（\(shortcut)）"
         default:
             return "録音を開始（\(shortcut)）"
+        }
+    }
+
+    /// The question row. The shortcut rides in the label when there is one; without
+    /// one the menu item still works, and points at where to bind a key.
+    private func askTitle(for state: DictationState) -> String {
+        let suffix = environment.askHotkeyLabel.map { "（\($0)）" } ?? ""
+        switch state {
+        case .recording, .preparing:
+            return mode == .ask ? "質問を送信\(suffix)" : "この録音を質問にする\(suffix)"
+        default:
+            return "質問する\(suffix)"
         }
     }
 

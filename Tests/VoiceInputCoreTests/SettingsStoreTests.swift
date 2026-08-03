@@ -34,6 +34,9 @@ struct SettingsStoreTests {
         settings.hotkey = HotkeyBinding(keyCode: 12, modifiers: 34)
         settings.hotkeyMode = .pushToTalk
         settings.launchAtLogin = true
+        settings.askHotkey = HotkeyBinding(keyCode: 19, modifiers: 4096)
+        settings.askModels = [.openAI: "gpt-4.1", .anthropic: "claude-sonnet-5"]
+        settings.askAnswerStyle = .detailed
         settings.styles = [
             FormattingStyle(
                 name: "チャット",
@@ -65,7 +68,9 @@ struct SettingsStoreTests {
         let (defaults, suite) = makeDefaults()
         defer { defaults.removePersistentDomain(forName: suite) }
 
-        // Valid JSON, wrong shape — e.g. a future version's layout.
+        // Valid JSON, wrong shape — e.g. a future version's layout. Every key the
+        // decoder wants is absent, so it lands on the defaults field by field; a
+        // key present with the wrong *type* throws and `load()` falls back instead.
         let payload = try JSONSerialization.data(withJSONObject: ["version": 99])
         defaults.set(payload, forKey: UserDefaultsSettingsStore.defaultKey)
 
@@ -105,6 +110,68 @@ struct SettingsStoreTests {
         #expect(loaded.localeIdentifier == "en-US")
         #expect(loaded.styles.count == FormattingStyle.builtIns.count)
         #expect(loaded.styles.allSatisfy { $0.hotkey == nil })
+    }
+
+    /// The reason `AppSettings` decodes field by field. A build that adds a setting
+    /// must still read the previous build's JSON, or the update silently resets
+    /// every preference the user has — shortcut, provider, edited styles, all of it.
+    @Test("settings saved before the ask feature existed still load, keeping the rest")
+    func settingsWithoutAskFieldsStillDecode() throws {
+        let (defaults, suite) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        var settings = AppSettings()
+        settings.localeIdentifier = "en-US"
+        settings.hotkey = HotkeyBinding(keyCode: 12, modifiers: 4096)
+        settings.llmProvider = .anthropic
+        settings.historyLimit = 7
+
+        let encoded = try JSONEncoder().encode(settings)
+        var object = try #require(
+            try JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        for key in ["askHotkey", "askModels", "askAnswerStyle"] {
+            object.removeValue(forKey: key)
+        }
+        defaults.set(
+            try JSONSerialization.data(withJSONObject: object),
+            forKey: UserDefaultsSettingsStore.defaultKey
+        )
+
+        let loaded = UserDefaultsSettingsStore(defaults: defaults).load()
+
+        #expect(loaded.localeIdentifier == "en-US")
+        #expect(loaded.hotkey == HotkeyBinding(keyCode: 12, modifiers: 4096))
+        #expect(loaded.llmProvider == .anthropic)
+        #expect(loaded.historyLimit == 7)
+        // The new settings arrive at their defaults, which is what "opt-in" means.
+        #expect(loaded.askHotkey == nil)
+        #expect(loaded.askModels.isEmpty)
+        #expect(loaded.askAnswerStyle == .concise)
+    }
+
+    /// The same tolerance, stated as a rule rather than for one release's fields.
+    @Test("any single missing key falls back to its default, not to a wholesale reset")
+    func anyMissingKeyFallsBackIndividually() throws {
+        var settings = AppSettings()
+        settings.localeIdentifier = "en-GB"
+        settings.historyLimit = 9
+
+        let encoded = try JSONEncoder().encode(settings)
+        var object = try #require(
+            try JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        object.removeValue(forKey: "historyLimit")
+        object.removeValue(forKey: "playSounds")
+
+        let decoded = try JSONDecoder().decode(
+            AppSettings.self,
+            from: try JSONSerialization.data(withJSONObject: object)
+        )
+
+        #expect(decoded.localeIdentifier == "en-GB")
+        #expect(decoded.historyLimit == AppSettings().historyLimit)
+        #expect(decoded.playSounds == AppSettings().playSounds)
     }
 
     @Test("missing key yields defaults")

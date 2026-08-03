@@ -14,5 +14,5 @@ public struct ActionRegistry: Sendable {
         byID[id]
     }
 
-    public static let live = ActionRegistry(actions: [FormatAction(), RawAction()])
+    public static let live = ActionRegistry(actions: [FormatAction(), RawAction(), AskAction()])
 }

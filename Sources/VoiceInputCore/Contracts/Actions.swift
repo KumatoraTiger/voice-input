@@ -2,10 +2,9 @@ import Foundation
 
 /// Identifies a thing the app can do with a finished dictation.
 ///
-/// Today only `.format` ships. The abstraction exists so that voice *commands*
-/// ("open the current file", "reply to this in English") can be added later as new
-/// `VoiceAction`s bound to their own hotkey, without touching the capture or
-/// transcription layers. See `docs/adding-an-action.md`.
+/// The abstraction is what lets the app do something other than "clean this up"
+/// with a finished transcript, bound to its own hotkey, without touching the
+/// capture or transcription layers. See `docs/adding-an-action.md`.
 public struct VoiceActionID: RawRepresentable, Hashable, Sendable, Codable {
     public let rawValue: String
     public init(rawValue: String) { self.rawValue = rawValue }
@@ -14,6 +13,12 @@ public struct VoiceActionID: RawRepresentable, Hashable, Sendable, Codable {
     public static let format = VoiceActionID(rawValue: "format")
     /// Pass the transcript through untouched (no LLM call, no API key needed).
     public static let raw = VoiceActionID(rawValue: "raw")
+    /// Treat the transcript as a question and put the answer on the clipboard.
+    ///
+    /// The one action where the speech is deliberately allowed to *ask* something
+    /// rather than only be rewritten — see `AskPromptBuilder` for where that
+    /// licence stops, and `docs/SECURITY.md` for why it is still text-only.
+    public static let ask = VoiceActionID(rawValue: "ask")
 }
 
 /// What an action produced and what should happen to it.

@@ -151,18 +151,9 @@ public struct FormattingPromptBuilder: Sendable {
     }
 
     /// Defuses delimiter-injection: a speaker (or a mis-recognition) producing
-    /// the literal tags must not be able to close the data fence early.
+    /// the literal tags must not be able to close the data fence early. Covers
+    /// every fence the app uses, not just this prompt's — see `PromptFence`.
     public static func neutralize(_ transcript: String) -> String {
-        transcript
-            .replacingOccurrences(
-                of: closingTag,
-                with: "[/transcript]",
-                options: [.caseInsensitive]
-            )
-            .replacingOccurrences(
-                of: openingTag,
-                with: "[transcript]",
-                options: [.caseInsensitive]
-            )
+        PromptFence.neutralize(transcript)
     }
 }

@@ -2,19 +2,35 @@ import Foundation
 import VoiceInputCore
 import VoiceInputPlatform
 
+/// Which of the two things a run in flight is doing, as the UI words it.
+///
+/// The state machine is identical for both — only the labels differ, so this is a
+/// presentation concern and stays out of Core.
+enum DictationMode: Equatable {
+    case dictation
+    case ask
+
+    init(action: VoiceActionID) {
+        self = action == .ask ? .ask : .dictation
+    }
+}
+
 /// Japanese labels and SF Symbol names for the dictation state machine, in one
 /// place so the menu bar icon, the menu and the HUD never drift apart.
 extension DictationState {
     /// One short line for the menu.
-    var statusText: String {
-        switch self {
-        case .idle: return "待機中"
-        case .preparing: return "準備中…"
-        case .recording: return "録音中…"
-        case .transcribing: return "文字起こし中…"
-        case .formatting: return "整形中…"
-        case .finished: return "完了"
-        case .failed: return "エラー"
+    func statusText(_ mode: DictationMode = .dictation) -> String {
+        switch (self, mode) {
+        case (.idle, _): return "待機中"
+        case (.preparing, _): return "準備中…"
+        case (.recording, .dictation): return "録音中…"
+        case (.recording, .ask): return "質問を録音中…"
+        case (.transcribing, .dictation): return "文字起こし中…"
+        case (.transcribing, .ask): return "質問を認識中…"
+        case (.formatting, .dictation): return "整形中…"
+        case (.formatting, .ask): return "回答を作成中…"
+        case (.finished, _): return "完了"
+        case (.failed, _): return "エラー"
         }
     }
 
@@ -32,7 +48,7 @@ extension DictationState {
 
     /// Spoken description for VoiceOver on the icon-only menu-bar item.
     var accessibilityStatus: String {
-        "VoiceInput: \(statusText)"
+        "VoiceInput: \(statusText())"
     }
 }
 
@@ -59,25 +75,30 @@ enum HUDPhase: Equatable {
         }
     }
 
-    var title: String {
-        switch self {
-        case .preparing: return "準備中…"
-        case .recording: return "録音中…"
-        case .transcribing: return "文字起こし中…"
-        case .formatting: return "整形中…"
-        case .finished: return "コピーしました"
-        case .failed: return "失敗しました"
+    func title(_ mode: DictationMode = .dictation) -> String {
+        switch (self, mode) {
+        case (.preparing, _): return "準備中…"
+        case (.recording, .dictation): return "録音中…"
+        case (.recording, .ask): return "質問を録音中…"
+        case (.transcribing, .dictation): return "文字起こし中…"
+        case (.transcribing, .ask): return "質問を認識中…"
+        case (.formatting, .dictation): return "整形中…"
+        case (.formatting, .ask): return "回答を作成中…"
+        case (.finished, .dictation): return "コピーしました"
+        case (.finished, .ask): return "回答をコピーしました"
+        case (.failed, _): return "失敗しました"
         }
     }
 
-    var symbol: String {
-        switch self {
-        case .preparing: return "hourglass"
-        case .recording: return "mic.fill"
-        case .transcribing: return "waveform"
-        case .formatting: return "text.append"
-        case .finished: return "checkmark.circle.fill"
-        case .failed: return "exclamationmark.triangle.fill"
+    func symbol(_ mode: DictationMode = .dictation) -> String {
+        switch (self, mode) {
+        case (.preparing, _): return "hourglass"
+        case (.recording, _): return "mic.fill"
+        case (.transcribing, _): return "waveform"
+        case (.formatting, .dictation): return "text.append"
+        case (.formatting, .ask): return "questionmark.bubble"
+        case (.finished, _): return "checkmark.circle.fill"
+        case (.failed, _): return "exclamationmark.triangle.fill"
         }
     }
 
@@ -112,6 +133,8 @@ extension VoiceInputError {
             return .permissions
         case .missingAPIKey, .keychainFailure, .providerHTTPError:
             return .apiKeys
+        case .emptyAnswer:
+            return .ask
         case .engineUnavailable:
             return .transcription
         default:

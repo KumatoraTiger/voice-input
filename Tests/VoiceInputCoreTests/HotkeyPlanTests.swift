@@ -131,5 +131,92 @@ struct HotkeyPlanTests {
         let id = UUID()
         #expect(HotkeyPurpose.style(id).styleID == id)
         #expect(HotkeyPurpose.dictation.styleID == nil)
+        #expect(HotkeyPurpose.ask.styleID == nil)
+    }
+
+    @Test("each purpose maps to the action it starts")
+    func purposeActionID() {
+        #expect(HotkeyPurpose.dictation.actionID == .format)
+        #expect(HotkeyPurpose.style(UUID()).actionID == .format)
+        #expect(HotkeyPurpose.ask.actionID == .ask)
+    }
+
+    // MARK: The question shortcut
+
+    @Test("no question shortcut means nothing is planned for it")
+    func askUnbound() {
+        let plan = HotkeyPlan.make(for: AppSettings())
+
+        #expect(plan.assignments.contains { $0.purpose == .ask } == false)
+        #expect(plan.askRejection == nil)
+    }
+
+    @Test("the question shortcut is planned right after the dictation one")
+    func askIsPlanned() {
+        var settings = Self.settings(styles: [Self.style("チャット", keyCode: 18)])
+        settings.askHotkey = HotkeyBinding(keyCode: 19, modifiers: 1 << 12)
+
+        let plan = HotkeyPlan.make(for: settings)
+
+        #expect(plan.assignments.map(\.purpose)[0...1] == [.dictation, .ask])
+        #expect(plan.assignments.count == 3)
+        #expect(plan.askRejection == nil)
+    }
+
+    @Test("a question shortcut colliding with the dictation one is rejected")
+    func askCollidesWithDictation() {
+        var settings = AppSettings()
+        settings.askHotkey = settings.hotkey
+
+        let plan = HotkeyPlan.make(for: settings)
+
+        #expect(plan.assignments.map(\.purpose) == [.dictation])
+        #expect(plan.askRejection == .duplicate(settings.hotkey))
+    }
+
+    @Test("the question shortcut is claimed before styles, so a later style loses")
+    func askBeatsAStyle() {
+        let binding = HotkeyBinding(keyCode: 18, modifiers: 1 << 12)
+        var settings = Self.settings(styles: [Self.style("チャット", keyCode: 18)])
+        settings.askHotkey = binding
+
+        let plan = HotkeyPlan.make(for: settings)
+
+        #expect(plan.assignments.map(\.purpose) == [.dictation, .ask])
+        #expect(plan.askRejection == nil)
+        #expect(plan.rejections.values.first == .duplicate(binding))
+    }
+
+    @Test("a modifier-only question shortcut is rejected, like a style's")
+    func askModifierOnlyRejected() {
+        var settings = AppSettings()
+        settings.askHotkey = .modifiersOnly((1 << 9) | (1 << 12))
+
+        let plan = HotkeyPlan.make(for: settings)
+
+        #expect(plan.assignments.map(\.purpose) == [.dictation])
+        #expect(plan.askRejection == .modifierOnlyUnsupported)
+    }
+
+    @Test("the question shortcut shares the dictation mode")
+    func askSharesMode() {
+        var settings = AppSettings()
+        settings.askHotkey = HotkeyBinding(keyCode: 19, modifiers: 1 << 12)
+        settings.hotkeyMode = .pushToTalk
+
+        let plan = HotkeyPlan.make(for: settings)
+
+        #expect(plan.assignments.allSatisfy { $0.mode == .pushToTalk })
+    }
+
+    @Test("a rejection can be worded for the shortcut it belongs to")
+    func rejectionWording() {
+        let rejection = HotkeyRejection.modifierOnlyUnsupported
+        #expect(rejection.message.contains("スタイルのショートカット"))
+        #expect(rejection.message(subject: "質問のショートカット").contains("質問のショートカット"))
+        #expect(
+            HotkeyRejection.duplicate(.defaultToggle).message(subject: "質問のショートカット")
+                == HotkeyRejection.duplicate(.defaultToggle).message
+        )
     }
 }

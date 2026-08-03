@@ -216,6 +216,7 @@ private struct HUDHostView: View {
         if let phase = HUDPhase(state: coordinator.state) {
             RecordingHUD(
                 phase: phase,
+                mode: DictationMode(action: coordinator.currentAction),
                 partialText: coordinator.partialText,
                 level: coordinator.inputLevel,
                 frontmostAppName: environment.frontmostAppName,

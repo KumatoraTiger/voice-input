@@ -67,6 +67,17 @@ public struct HotkeyBinding: Codable, Sendable, Equatable, Hashable {
     public static let defaultToggle = HotkeyBinding(keyCode: 49, modifiers: 1 << 11)
 }
 
+/// How long an answer to a spoken question should be.
+///
+/// The single most useful knob for voice Q&A: a question asked out loud usually
+/// wants a short answer, but the same shortcut is also how you ask for a snippet.
+public enum AskAnswerStyle: String, Codable, Sendable, CaseIterable {
+    /// Conclusion first, a few sentences. The default.
+    case concise
+    /// As long as it needs to be, steps and examples included.
+    case detailed
+}
+
 /// How the hotkey behaves.
 public enum HotkeyMode: String, Codable, Sendable, CaseIterable {
     /// Press once to start, press again to stop.
@@ -96,6 +107,19 @@ public struct AppSettings: Codable, Sendable, Equatable {
     /// Skip the LLM entirely and emit the raw transcript.
     public var formattingEnabled: Bool
 
+    // MARK: Ask
+
+    /// Shortcut that records a *question* instead of a dictation.
+    ///
+    /// `nil`, and deliberately without a default: the feature is opt-in, so it can
+    /// never arrive in an update having claimed a combination the user relies on.
+    public var askHotkey: HotkeyBinding?
+    /// Model per provider for questions, kept apart from `models` on purpose:
+    /// formatting wants the cheapest model that can punctuate, answering wants the
+    /// most capable one the user is willing to pay for.
+    public var askModels: [LLMProviderID: String]
+    public var askAnswerStyle: AskAnswerStyle
+
     // MARK: Output
     public var autoPasteEnabled: Bool
     public var playSounds: Bool
@@ -117,6 +141,9 @@ public struct AppSettings: Codable, Sendable, Equatable {
         styles: [FormattingStyle] = FormattingStyle.builtIns,
         activeStyleID: UUID? = FormattingStyle.builtIns.first?.id,
         formattingEnabled: Bool = true,
+        askHotkey: HotkeyBinding? = nil,
+        askModels: [LLMProviderID: String] = [:],
+        askAnswerStyle: AskAnswerStyle = .concise,
         autoPasteEnabled: Bool = false,
         playSounds: Bool = true,
         historyLimit: Int = 20,
@@ -133,6 +160,9 @@ public struct AppSettings: Codable, Sendable, Equatable {
         self.styles = styles
         self.activeStyleID = activeStyleID
         self.formattingEnabled = formattingEnabled
+        self.askHotkey = askHotkey
+        self.askModels = askModels
+        self.askAnswerStyle = askAnswerStyle
         self.autoPasteEnabled = autoPasteEnabled
         self.playSounds = playSounds
         self.historyLimit = historyLimit
@@ -162,6 +192,58 @@ public struct AppSettings: Codable, Sendable, Equatable {
         var copy = self
         copy.activeStyleID = id
         return copy
+    }
+
+    /// The model a question should use, or `nil` to let the provider's default
+    /// stand. Blank counts as unset, the way the formatting model field does.
+    public func askModel(for provider: LLMProviderID) -> String? {
+        askModels[provider]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nilIfEmpty
+    }
+}
+
+extension AppSettings {
+    /// Decoded field by field, so that **adding** a setting never resets the ones a
+    /// user already has.
+    ///
+    /// The synthesized decoder requires every non-optional key to be present, so the
+    /// build that introduces one cannot read the previous build's JSON — and
+    /// `UserDefaultsSettingsStore.load()` would quietly hand back defaults, taking
+    /// the hotkey, the provider and every edited style with it. Optional properties
+    /// were always safe (`decodeIfPresent` is synthesized for them); this extends
+    /// the same tolerance to the rest.
+    ///
+    /// A key that is present but of the wrong *type* still throws, which is what
+    /// keeps genuinely corrupt data falling back to defaults wholesale.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let fallback = AppSettings()
+
+        func decode<T: Decodable>(_ key: CodingKeys, or standby: T) throws -> T {
+            try container.decodeIfPresent(T.self, forKey: key) ?? standby
+        }
+
+        self.init(
+            transcriptionEngine: try decode(.transcriptionEngine, or: fallback.transcriptionEngine),
+            localeIdentifier: try decode(.localeIdentifier, or: fallback.localeIdentifier),
+            transcriptionModel: try decode(.transcriptionModel, or: fallback.transcriptionModel),
+            vocabulary: try decode(.vocabulary, or: fallback.vocabulary),
+            llmProvider: try decode(.llmProvider, or: fallback.llmProvider),
+            models: try decode(.models, or: fallback.models),
+            styles: try decode(.styles, or: fallback.styles),
+            activeStyleID: try decode(.activeStyleID, or: fallback.activeStyleID),
+            formattingEnabled: try decode(.formattingEnabled, or: fallback.formattingEnabled),
+            askHotkey: try container.decodeIfPresent(HotkeyBinding.self, forKey: .askHotkey),
+            askModels: try decode(.askModels, or: fallback.askModels),
+            askAnswerStyle: try decode(.askAnswerStyle, or: fallback.askAnswerStyle),
+            autoPasteEnabled: try decode(.autoPasteEnabled, or: fallback.autoPasteEnabled),
+            playSounds: try decode(.playSounds, or: fallback.playSounds),
+            historyLimit: try decode(.historyLimit, or: fallback.historyLimit),
+            hotkey: try decode(.hotkey, or: fallback.hotkey),
+            hotkeyMode: try decode(.hotkeyMode, or: fallback.hotkeyMode),
+            launchAtLogin: try decode(.launchAtLogin, or: fallback.launchAtLogin)
+        )
     }
 }
 

@@ -46,6 +46,11 @@ What is sent, precisely:
 - **LLM formatting:** the system prompt (the built-in instruction plus your selected
   style's instructions) and the raw transcript as a user message. Nothing else — no
   clipboard contents, no window titles, no file paths, no telemetry.
+- **Asking a question** (the 質問 shortcut, off until you bind a key): the ask system
+  prompt, the answer-length setting, your vocabulary, the locale, and the transcribed
+  question as a user message. Same endpoints and the same provider as formatting, on
+  whichever model you set in 設定 → 質問. The answer comes back, goes on the
+  clipboard, and is not sent anywhere else.
 - **Nothing at all** is sent to any endpoint the user did not select. The app has no
   analytics, no crash reporter, no update check, and no first-party server.
 
@@ -114,6 +119,36 @@ person at the keyboard, someone else in the room, and audio playing nearby. So:
 - Practical consequence you should still be aware of: the formatted text can contain
   anything the speaker said, and auto-paste types it into whatever is frontmost.
   Auto-paste is off by default for that reason.
+
+### The ask action is the one place speech is a request
+
+`AskAction` breaks the sentence above deliberately: the point of the 質問 shortcut is
+that 「Swift で配列の重複を取り除く方法」 gets *answered*, not punctuated. Nothing
+about the rule changed for dictation — the two paths never mix, because only the
+shortcut the user bound to `.ask` reaches this action, and `DictationCoordinator`
+takes the action id from the `HotkeyPurpose` rather than from anything in the audio.
+
+Where the licence stops, and why it is still safe to give:
+
+- **Content, not configuration.** `AskPromptBuilder`'s system prompt says the model
+  may answer what is inside the fence, and must not obey text there that tries to
+  rewrite the output rules, its role, or the destination. That distinction is the
+  whole security property of this action, so it is asserted in the tests.
+- **Still fenced, still a user message.** The question travels in `<question>` …
+  `</question>` inside a *user* message and is never interpolated into the system
+  prompt, exactly like a transcript. `AskPromptBuilder.neutralize(_:)` shares one
+  fence list with the formatter (`PromptFence`), so neither prompt's tags can be
+  closed early from either path.
+- **Text only, and the prompt says so.** An answer is a string that lands on the
+  clipboard. There is no tool, path, URL, shell or network destination an
+  `ActionOutcome` can name, and the prompt states that rather than leaving the model
+  to infer it. The worst case of a hostile question is a useless answer.
+- **No memory.** One recording is one question; nothing from a previous question or
+  answer is carried into the next call. There is no conversation state to poison, and
+  nothing about a question outlives the process.
+- **The same practical caveat as formatting, and it bites harder here.** An answer can
+  be long, and with auto-paste on it is typed into whatever is frontmost. Auto-paste
+  stays off by default.
 
 ## Permissions
 

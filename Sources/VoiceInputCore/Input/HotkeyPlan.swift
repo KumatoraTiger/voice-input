@@ -4,12 +4,23 @@ import Foundation
 public enum HotkeyPurpose: Hashable, Sendable {
     /// The main dictation shortcut. Uses whatever style is selected in Settings.
     case dictation
+    /// Record a question and put the answer on the clipboard.
+    case ask
     /// Dictate with one specific formatting style, for this dictation only.
     case style(UUID)
 
     public var styleID: UUID? {
         guard case .style(let id) = self else { return nil }
         return id
+    }
+
+    /// The action a press starts. Keeps the mapping in Core, so the app layer does
+    /// not get to invent one.
+    public var actionID: VoiceActionID {
+        switch self {
+        case .dictation, .style: return .format
+        case .ask: return .ask
+        }
     }
 }
 
@@ -38,13 +49,20 @@ public enum HotkeyRejection: Sendable, Equatable {
     /// permission, so they stay reserved for the one main shortcut.
     case modifierOnlyUnsupported
 
-    public var message: String {
+    /// Wording for the shortcut this rejection belongs to. A style and the question
+    /// shortcut hit the same two rules, but "スタイルのショートカット" reads wrong
+    /// next to the question field.
+    public func message(subject: String) -> String {
         switch self {
         case .duplicate:
             return "他のショートカットと重複しているため無効です。"
         case .modifierOnlyUnsupported:
-            return "スタイルのショートカットには通常のキーとの組み合わせが必要です（例: ⌃⇧1）。"
+            return "\(subject)には通常のキーとの組み合わせが必要です（例: ⌃⇧1）。"
         }
+    }
+
+    public var message: String {
+        message(subject: "スタイルのショートカット")
     }
 }
 
@@ -57,14 +75,23 @@ public struct HotkeyPlan: Sendable, Equatable {
     public var assignments: [HotkeyAssignment]
     /// Configured but not registered, keyed by the style that owns it.
     public var rejections: [UUID: HotkeyRejection]
+    /// Why the question shortcut was left unregistered, when one is configured.
+    /// Separate from `rejections` because it is not owned by a style.
+    public var askRejection: HotkeyRejection?
 
-    public init(assignments: [HotkeyAssignment], rejections: [UUID: HotkeyRejection]) {
+    public init(
+        assignments: [HotkeyAssignment],
+        rejections: [UUID: HotkeyRejection],
+        askRejection: HotkeyRejection? = nil
+    ) {
         self.assignments = assignments
         self.rejections = rejections
+        self.askRejection = askRejection
     }
 
-    /// The main shortcut always wins: styles are considered afterwards, in the
-    /// order they appear in Settings, and the first claim on a combination keeps it.
+    /// The main shortcut always wins: the question shortcut is considered next, then
+    /// styles in the order they appear in Settings, and the first claim on a
+    /// combination keeps it.
     public static func make(for settings: AppSettings) -> HotkeyPlan {
         var assignments = [
             HotkeyAssignment(
@@ -75,6 +102,26 @@ public struct HotkeyPlan: Sendable, Equatable {
         ]
         var claimed: Set<HotkeyBinding> = [settings.hotkey]
         var rejections: [UUID: HotkeyRejection] = [:]
+        var askRejection: HotkeyRejection?
+
+        if let binding = settings.askHotkey {
+            // Same rule as a style, for the same reason: the modifier-only path
+            // costs a permanent event monitor and Accessibility, so exactly one
+            // shortcut — the main dictation one — may take it.
+            if binding.isModifierOnly {
+                askRejection = .modifierOnlyUnsupported
+            } else if !claimed.insert(binding).inserted {
+                askRejection = .duplicate(binding)
+            } else {
+                assignments.append(
+                    HotkeyAssignment(
+                        purpose: .ask,
+                        binding: binding,
+                        mode: settings.hotkeyMode
+                    )
+                )
+            }
+        }
 
         for style in settings.styles {
             guard let binding = style.hotkey else { continue }
@@ -95,6 +142,10 @@ public struct HotkeyPlan: Sendable, Equatable {
             )
         }
 
-        return HotkeyPlan(assignments: assignments, rejections: rejections)
+        return HotkeyPlan(
+            assignments: assignments,
+            rejections: rejections,
+            askRejection: askRejection
+        )
     }
 }

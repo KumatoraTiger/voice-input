@@ -12,7 +12,7 @@ flowchart TD
 
     subgraph Core["VoiceInputCore — pure logic, no system frameworks"]
         CO["DictationCoordinator<br/>@MainActor @Observable"]
-        ACT["ActionRegistry<br/>FormatAction / RawAction"]
+        ACT["ActionRegistry<br/>FormatAction / RawAction / AskAction"]
         PROMPT["FormattingPromptBuilder"]
         LLMREG["LLMProviderRegistry<br/>OpenAI · Anthropic · Gemini"]
         CLOUDASR["OpenAITranscriptionEngine<br/>(pure HTTP + WAVEncoder)"]
@@ -85,7 +85,7 @@ stateDiagram-v2
     idle --> preparing: hotkey / menu
     preparing --> recording: permissions OK, engine ready
     recording --> transcribing: hotkey again / key release
-    transcribing --> formatting: transcript non-empty and formatting enabled
+    transcribing --> formatting: action needs the LLM (format / ask)
     transcribing --> finished: raw action, or formatting disabled
     formatting --> finished: LLM returned
     finished --> idle: after finishedStateDuration
@@ -107,6 +107,11 @@ stateDiagram-v2
   Settings to enter a key).
 - Cancel is always available: it tears down the session, discards audio and text,
   and returns to `idle` without producing output.
+- Asking a question adds **no state**. `AskAction` walks the same path as
+  `FormatAction`, so `formatting` covers "waiting on the LLM" either way;
+  `DictationCoordinator.currentAction` is what the HUD reads to say 「回答を作成中…」
+  instead of 「整形中…」. Adding a state per action would multiply the machine for a
+  purely cosmetic difference.
 
 ### Hotkeys have two backends
 
@@ -129,21 +134,24 @@ hold directly and needs no such guard.
 
 ### More than one shortcut: `HotkeyPurpose` and `HotkeyPlan`
 
-Every formatting style may carry a shortcut of its own, so `HotkeyMonitor` holds a
-set of registrations rather than one. Each is tagged with a `HotkeyPurpose`
-(`.dictation` or `.style(UUID)`), the Carbon event carries its `EventHotKeyID`, and
-the press is routed back to the purpose that owns it.
+The question shortcut and every formatting style may carry a shortcut of their own, so
+`HotkeyMonitor` holds a set of registrations rather than one. Each is tagged with a
+`HotkeyPurpose` (`.dictation`, `.ask` or `.style(UUID)`), the Carbon event carries its
+`EventHotKeyID`, and the press is routed back to the purpose that owns it.
+`HotkeyPurpose.actionID` is what maps a press to a `VoiceActionID`, so the app layer
+never invents that mapping.
 
 `HotkeyPlan.make(for:)` (Core, unit-tested) turns `AppSettings` into that set and is
 where the rules live:
 
-- the main dictation shortcut always wins; styles are considered in Settings order
-  and the first claim on a combination keeps it,
+- the main dictation shortcut always wins; `.ask` is claimed next, then styles in
+  Settings order, and the first claim on a combination keeps it,
 - a duplicate is **rejected with a reason** rather than handed to Carbon, which
-  would fail opaquely,
+  would fail opaquely — `rejections` is keyed by style, and `askRejection` carries
+  the question shortcut's, which belongs to no style,
 - a modifier-only binding is allowed only for `.dictation` — it is the one shape
   that costs a permission and a permanent event monitor, so it is not multiplied
-  across styles.
+  across styles or given to `.ask`.
 
 A registration that still fails (another app owns the combination) takes down only
 itself: the remaining shortcuts stay live, and the reason is surfaced next to that

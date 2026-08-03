@@ -25,6 +25,13 @@ public final class DictationCoordinator {
     /// Cleared at the start of every dictation.
     public private(set) var styleOverrideID: UUID?
 
+    /// What the run in flight will do with the transcript — set by whichever
+    /// shortcut started it, and switchable while audio is still being captured.
+    ///
+    /// Observable because the HUD has to say 「回答を作成中…」 rather than
+    /// 「整形中…」 for a question; the state machine itself is the same either way.
+    public private(set) var currentAction: VoiceActionID = .format
+
     /// Assigning persists through the injected `SettingsStore`.
     public var settings: AppSettings {
         get { storedSettings }
@@ -74,7 +81,6 @@ public final class DictationCoordinator {
     @ObservationIgnored private var processTask: Task<Void, Never>?
     @ObservationIgnored private var captureTask: Task<Void, Never>?
     @ObservationIgnored private var partialsTask: Task<Void, Never>?
-    @ObservationIgnored private var currentAction: VoiceActionID = .format
     @ObservationIgnored private var capturedFrontmostAppName: String?
 
     private static let log = Logger(subsystem: "io.github.voiceinput", category: "pipeline")
@@ -104,12 +110,16 @@ public final class DictationCoordinator {
 
     /// `styleID` names a formatting style for this dictation only.
     ///
-    /// While recording, a *different* style switches the dictation in flight
-    /// instead of ending it — pressing a style shortcut mid-sentence is a
-    /// correction, not a stop. The same style, or the plain shortcut, stops.
+    /// While recording, a *different* action or style switches the run in flight
+    /// instead of ending it — pressing another shortcut mid-sentence is a
+    /// correction, not a stop. So the question shortcut turns a dictation already
+    /// under way into a question, and the dictation shortcut turns it back. The
+    /// same shortcut pressed twice stops.
     public func toggle(action: VoiceActionID = .format, styleID: UUID? = nil) {
         if isCapturing {
-            if let styleID, styleID != effectiveStyleID {
+            if action != currentAction {
+                selectAction(action)
+            } else if let styleID, styleID != effectiveStyleID {
                 selectStyle(styleID)
             } else {
                 stopAndProcess()
@@ -151,6 +161,14 @@ public final class DictationCoordinator {
     public func selectStyle(_ id: UUID) {
         guard isCapturing, let style = settings.style(withID: id) else { return }
         styleOverrideID = style.id
+    }
+
+    /// Switches what happens to the recording in flight — 「これは質問にする」.
+    /// Ignored once audio has stopped, and ignored for an action that is not
+    /// registered, so a stale shortcut cannot strand a recording.
+    public func selectAction(_ id: VoiceActionID) {
+        guard isCapturing, actions.action(for: id) != nil else { return }
+        currentAction = id
     }
 
     /// The style this dictation will be formatted with: the one-off override when
