@@ -22,6 +22,34 @@ public enum VoiceInputError: Error, Sendable, Equatable {
     case cancelled
 }
 
+extension VoiceInputError {
+    /// A stable, content-free name for the failure, safe to log as `.public`.
+    ///
+    /// The associated values are deliberately left out: a transcription or provider
+    /// detail can quote what the user said, and `docs/SECURITY.md` promises that
+    /// never reaches a log. The case name alone is what makes a bug report
+    /// actionable without it.
+    public var kind: String {
+        switch self {
+        case .microphonePermissionDenied: return "microphonePermissionDenied"
+        case .speechPermissionDenied: return "speechPermissionDenied"
+        case .accessibilityPermissionDenied: return "accessibilityPermissionDenied"
+        case .audioEngineFailed: return "audioEngineFailed"
+        case .engineUnavailable(let id, _): return "engineUnavailable(\(id.rawValue))"
+        case .transcriptionFailed: return "transcriptionFailed"
+        case .emptyTranscript: return "emptyTranscript"
+        case .missingAPIKey(let provider): return "missingAPIKey(\(provider.rawValue))"
+        case .keychainFailure: return "keychainFailure"
+        case .providerHTTPError(let provider, let status, _):
+            return "providerHTTPError(\(provider), \(status))"
+        case .providerDecodingFailed(let provider, _): return "providerDecodingFailed(\(provider))"
+        case .invalidModelName(let provider, _): return "invalidModelName(\(provider))"
+        case .networkFailure: return "networkFailure"
+        case .cancelled: return "cancelled"
+        }
+    }
+}
+
 extension VoiceInputError: LocalizedError {
     public var errorDescription: String? {
         switch self {

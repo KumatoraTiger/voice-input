@@ -24,10 +24,54 @@ The recognizer that powers system dictation, forced into on-device mode
 - **Weaknesses, honestly:** it is tuned for short utterances. On long-form Japanese
   it drifts: punctuation is sparse, homophones (漢字変換) go wrong, proper nouns and
   technical jargon get mangled, and quality degrades noticeably past roughly a
-  minute of continuous speech. Apple also historically caps a single on-device
-  recognition session at about one minute of audio. The LLM rewrite step hides a
-  lot of this, but it cannot recover a word that was never recognised.
+  minute of continuous speech. The LLM rewrite step hides a lot of this, but it
+  cannot recover a word that was never recognised.
 - **Mitigation:** put names and jargon in Settings → 語彙 (`contextualStrings`).
+
+#### The running transcript is not the whole dictation
+
+This engine has a trap worth knowing about, and it is the reason
+`AppleOnDeviceSession` is more than a thin wrapper. `SFSpeechRecognizer` does not
+hand back one transcript for one dictation. It discards what it has and starts over
+in **three** different ways, and only the first is announced:
+
+1. **The task ends.** The endpointer decides an utterance is over — a pause between
+   two sentences is enough — and the task reports `isFinal` (or, on this hardware,
+   `kAFAssistantErrorDomain 1101`) and goes quiet, while the microphone keeps
+   streaming into a request nobody is listening to. On-device recognition also
+   hard-stops at roughly a minute of audio.
+2. **The task restarts itself, silently.** Part-way through, `formattedString`
+   reverts to the newest utterance alone and the segment timestamps rewind — no
+   `isFinal`, no error, no callback of any kind. Measured on macOS 15.5: a 65-second
+   dictation did this **ten times**. Before it was handled, that dictation reduced
+   to the last sentence.
+3. **The terminal result comes back empty.** `endAudio()` can tear the task down
+   mid-utterance, and the `isFinal` result then carries an empty string even though
+   dozens of partials carried text.
+
+So the session tracks the running transcript itself:
+
+- `UtteranceBoundary.restarted(...)` (Core, unit-tested) spots case 2 from a partial
+  that is *shorter* than the last one **and** either rewinds the segment timestamp
+  or no longer shares the first half of it. Both signals are required — a missed
+  restart silently drops the first half of a dictation, a false one duplicates it.
+- Case 1 banks the segment and swaps a fresh request and task in under the session
+  lock, so audio keeps flowing. `finish()` is the only thing that ends the dictation.
+- Case 3 falls back to the segment's last partial.
+
+The transcript `finish()` returns is `TranscriptSegmentJoiner.join(...)` over
+everything banked. The joiner (Core, unit-tested) inserts a space between segments
+only when neither side of the seam is Japanese/Chinese, so 日本語 does not come back
+with spaces sprinkled through it.
+
+Rollover is bounded: a task that ends empty within half a second of the previous one
+counts towards a spin guard, and there is an absolute cap on reopened tasks. Both
+exist so a recognizer that has stopped working fails instead of looping.
+
+None of this is documented by Apple, and all of it was found by instrumenting a real
+dictation — which is why the `io.github.voiceinput:asr` log category exists and logs
+segment counts, partial counts and character counts (never text). If this engine
+starts losing speech again, that log is the first thing to read.
 
 ### 2. Apple SpeechAnalyzer — macOS 26+
 

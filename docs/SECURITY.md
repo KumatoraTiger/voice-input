@@ -72,10 +72,14 @@ crash reports long after the request.
   menu (`DictationRecord`) lives in memory only, is capped by
   `AppSettings.historyLimit`, and dies with the process.
 - **Logs never contain user content.** The app logs through `os.Logger` with
-  subsystem `io.github.voiceinput`: state transitions, durations, engine ids and
-  error kinds. Transcripts, prompt bodies, LLM responses and keys must never be
-  logged — if content is ever logged for debugging it must be marked
-  `privacy: .private` and left off by default.
+  subsystem `io.github.voiceinput`: state transitions, durations, engine ids, error
+  kinds, and counts — how many recognition segments and partial results a dictation
+  produced, and how many characters the transcript and the formatted output ran to.
+  Counts and timestamps are metadata; the text they measure is never logged.
+  Transcripts, prompt bodies, LLM responses and keys must never be logged — if
+  content is ever logged for debugging it must be marked `privacy: .private` and
+  left off by default. `VoiceInputError.kind` exists for exactly this reason: it
+  names the failure case without its associated strings, which can quote speech.
 - The only things on disk are `AppSettings` in `UserDefaults` (no secrets) and the
   Keychain items.
 

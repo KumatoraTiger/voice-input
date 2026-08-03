@@ -2,6 +2,7 @@ import AVFoundation
 import Foundation
 import Speech
 import VoiceInputCore
+import os
 
 /// `SFSpeechRecognizer` driven strictly on-device.
 ///
@@ -96,22 +97,53 @@ public struct AppleOnDeviceEngine: TranscriptionEngine {
 
 /// One dictation against `SFSpeechAudioBufferRecognitionRequest`.
 ///
-/// The recognition task's result handler can fire before, during or after
-/// `finish()`, so the final outcome is parked in `pendingResult` and picked up by
-/// whichever side arrives second.
+/// **A recognition task is one *segment*, not one dictation.** `SFSpeechRecognizer`
+/// ends the task whenever its endpointer decides an utterance is over — a pause
+/// between sentences is enough — and on-device recognition additionally hard-stops
+/// at roughly a minute of audio. Treating the first `isFinal` as the answer
+/// therefore threw away everything the user said afterwards. So each finished
+/// segment is banked in `finalizedSegments` and a fresh task is opened over the
+/// same audio stream; only `finish()` ends the dictation for real.
+///
+/// The result handler can fire before, during or after `finish()`, so the final
+/// outcome is parked in `pendingResult` and picked up by whichever side arrives
+/// second.
 private final class AppleOnDeviceSession: TranscriptionSession, @unchecked Sendable {
+    /// How many segments may come back empty *back-to-back* before we stop
+    /// reopening tasks — see `spinInterval`.
+    private static let maxEmptySegments = 4
+    /// A task that ends this soon after the previous one, with nothing recognised,
+    /// is a broken recognizer rather than a pause in the speech.
+    private static let spinInterval: TimeInterval = 0.5
+    /// Absolute cap on reopened tasks, as a backstop for a stuck recognizer. At
+    /// roughly a minute per segment this is far longer than any real dictation.
+    private static let maxSegments = 240
+
+    /// Segment bookkeeping only — how a task ended and whether it produced
+    /// anything. Never the recognised text.
+    private static let log = Logger(subsystem: "io.github.voiceinput", category: "asr")
+
     private let lock = NSLock()
     private let recognizer: SFSpeechRecognizer
-    private let request: SFSpeechAudioBufferRecognitionRequest
     private let configuration: TranscriptionConfiguration
     private let timeout: TimeInterval
     private let startedAt = Date()
     private let partialContinuation: AsyncStream<String>.Continuation
 
+    private var request: SFSpeechAudioBufferRecognitionRequest
     private var task: SFSpeechRecognitionTask?
+    private var finalizedSegments: [String] = []
     private var latestTranscript = ""
+    private var segmentCount = 0
+    private var emptySegments = 0
+    private var lastSegmentEndedAt: Date?
+    private var partialCount = 0
+    private var appendedBuffers = 0
+    private var utteranceStart: TimeInterval = 0
+    private var lastError: Error?
     private var pendingResult: Result<String, Error>?
     private var finalContinuation: CheckedContinuation<String, Error>?
+    private var isStopping = false
     private var isFinished = false
 
     let partialTranscripts: AsyncStream<String>
@@ -130,6 +162,17 @@ private final class AppleOnDeviceSession: TranscriptionSession, @unchecked Senda
         partialTranscripts = stream
         partialContinuation = continuation
 
+        let request = Self.makeRequest(configuration: configuration)
+        self.request = request
+
+        task = recognizer.recognitionTask(with: request) { [weak self] result, error in
+            self?.handle(result: result, error: error)
+        }
+    }
+
+    private static func makeRequest(
+        configuration: TranscriptionConfiguration
+    ) -> SFSpeechAudioBufferRecognitionRequest {
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.requiresOnDeviceRecognition = true
         request.shouldReportPartialResults = true
@@ -138,24 +181,42 @@ private final class AppleOnDeviceSession: TranscriptionSession, @unchecked Senda
         if !configuration.contextualStrings.isEmpty {
             request.contextualStrings = configuration.contextualStrings
         }
-        self.request = request
-
-        task = recognizer.recognitionTask(with: request) { [weak self] result, error in
-            self?.handle(result: result, error: error)
-        }
+        return request
     }
 
     // MARK: TranscriptionSession
 
     func append(_ buffer: VoiceInputCore.AudioBuffer) async {
-        guard locked({ !isFinished }), let pcm = Self.makePCMBuffer(from: buffer) else { return }
+        guard let request = locked({ isFinished ? nil : request }),
+            let pcm = Self.makePCMBuffer(from: buffer)
+        else { return }
+        locked { appendedBuffers += 1 }
         request.append(pcm)
     }
 
     func finish() async throws -> Transcript {
-        if locked({ isFinished }) {
-            throw VoiceInputError.cancelled
+        // Reading the request under the same lock that sets `isStopping` is what
+        // keeps a segment rollover from stranding `endAudio()` on a dead request.
+        let request = locked { () -> SFSpeechAudioBufferRecognitionRequest? in
+            guard !isFinished, !isStopping else { return nil }
+            isStopping = true
+            return self.request
         }
+        guard let request else { throw VoiceInputError.cancelled }
+
+        let (segments, partials, banked, buffers, resolved) = locked {
+            (segmentCount, partialCount, finalizedSegments.count, appendedBuffers,
+                pendingResult != nil)
+        }
+        Self.log.notice(
+            """
+            finishing: segments=\(segments, privacy: .public) \
+            partials=\(partials, privacy: .public) \
+            banked=\(banked, privacy: .public) \
+            buffers=\(buffers, privacy: .public) \
+            alreadyResolved=\(resolved, privacy: .public)
+            """
+        )
 
         request.endAudio()
 
@@ -180,11 +241,13 @@ private final class AppleOnDeviceSession: TranscriptionSession, @unchecked Senda
     }
 
     func cancel() async {
-        let continuation = locked { () -> CheckedContinuation<String, Error>? in
+        let (continuation, task) = locked {
+            () -> (CheckedContinuation<String, Error>?, SFSpeechRecognitionTask?) in
             let pending = finalContinuation
             finalContinuation = nil
             pendingResult = pendingResult ?? .failure(VoiceInputError.cancelled)
-            return pending
+            isStopping = true
+            return (pending, self.task)
         }
 
         task?.cancel()
@@ -205,30 +268,190 @@ private final class AppleOnDeviceSession: TranscriptionSession, @unchecked Senda
     private func handle(result: SFSpeechRecognitionResult?, error: Error?) {
         if let result {
             let text = result.bestTranscription.formattedString
-            lock.lock()
-            latestTranscript = text
-            lock.unlock()
-
             if result.isFinal {
-                resolve(.success(text))
+                endSegment(text: text, error: nil)
                 return
             }
-            partialContinuation.yield(text)
+            // The recognizer restarts its transcription part-way through a task,
+            // silently: `formattedString` reverts to the newest utterance and the
+            // segment timestamps rewind. Nothing else marks it, so the earlier
+            // speech has to be banked here or it is gone.
+            let windowStart = result.bestTranscription.segments.first?.timestamp ?? 0
+            lock.lock()
+            let previousStart = utteranceStart
+            let previous = latestTranscript
+            let restarted = UtteranceBoundary.restarted(
+                previous: previous,
+                next: text,
+                previousStart: previousStart,
+                nextStart: windowStart
+            )
+            if restarted {
+                finalizedSegments.append(previous)
+            }
+            utteranceStart = windowStart
+            latestTranscript = text
+            partialCount += 1
+            let banked = finalizedSegments.count
+            let preview = TranscriptSegmentJoiner.join(finalizedSegments + [text])
+            lock.unlock()
+
+            if restarted {
+                // Lengths and timestamps only — never the text.
+                Self.log.notice(
+                    """
+                    utterance restarted: banked=\(banked, privacy: .public) \
+                    keptChars=\(previous.count, privacy: .public) \
+                    newChars=\(text.count, privacy: .public) \
+                    from=\(previousStart, format: .fixed(precision: 2), privacy: .public) \
+                    to=\(windowStart, format: .fixed(precision: 2), privacy: .public)
+                    """
+                )
+            }
+            partialContinuation.yield(preview)
+            return
         }
 
+        // An error also ends the task, and mid-dictation it usually just means
+        // "that utterance is over" or "the one-minute on-device cap was reached" —
+        // the same rollover as a normal `isFinal`.
         guard let error else { return }
-        lock.lock()
-        let fallback = latestTranscript
-        lock.unlock()
+        endSegment(text: locked { latestTranscript }, error: error)
+    }
 
-        if !fallback.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            // The task ended abnormally but we already have usable text; keep it.
-            resolve(.success(fallback))
-        } else if Self.isNoSpeechDetected(error) {
-            resolve(.failure(VoiceInputError.emptyTranscript))
-        } else {
-            resolve(.failure(VoiceInputError.transcriptionFailed(error.localizedDescription)))
+    /// What to do now that one recognition task has ended.
+    private enum SegmentOutcome {
+        case ignore
+        /// The dictation continues: reopen a task and keep the joined text so far.
+        case rollOver(preview: String)
+        /// The dictation is over (or unrecoverable): this is the whole transcript.
+        case complete(text: String, error: Error?)
+
+        var label: String {
+            switch self {
+            case .ignore: return "ignore"
+            case .rollOver: return "rollOver"
+            case .complete(let text, _): return text.isEmpty ? "complete(empty)" : "complete"
+            }
         }
+    }
+
+    private func endSegment(text: String, error: Error?) {
+        var trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let outcome = locked { () -> SegmentOutcome in
+            guard pendingResult == nil, !isFinished else { return .ignore }
+
+            // A terminal result can come back empty even after partials carried
+            // text — reproducibly so on macOS 15 when `endAudio()` tears the task
+            // down mid-utterance. The last partial is then the best transcript this
+            // segment produced, and dropping it loses the whole dictation.
+            if trimmed.isEmpty {
+                trimmed = latestTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            if !trimmed.isEmpty {
+                finalizedSegments.append(trimmed)
+            }
+            // A task that ends empty *instantly* means the recognizer has stopped
+            // working and reopening it would spin. One that ends empty after a
+            // while is just silence, which is a normal part of a dictation.
+            let now = Date()
+            let immediate =
+                lastSegmentEndedAt.map { now.timeIntervalSince($0) < Self.spinInterval } ?? false
+            emptySegments = (trimmed.isEmpty && immediate) ? emptySegments + 1 : 0
+            lastSegmentEndedAt = now
+
+            latestTranscript = ""
+            utteranceStart = 0
+            segmentCount += 1
+            if let error { lastError = error }
+
+            let joined = TranscriptSegmentJoiner.join(finalizedSegments)
+            guard !isStopping,
+                emptySegments < Self.maxEmptySegments,
+                segmentCount < Self.maxSegments
+            else {
+                return .complete(text: joined, error: lastError)
+            }
+            return .rollOver(preview: joined)
+        }
+
+        let (index, partials) = locked { (segmentCount, partialCount) }
+        Self.log.notice(
+            """
+            segment ended: index=\(index, privacy: .public) \
+            empty=\(trimmed.isEmpty, privacy: .public) \
+            partials=\(partials, privacy: .public) \
+            error=\(Self.describe(error), privacy: .public) \
+            outcome=\(outcome.label, privacy: .public)
+            """
+        )
+
+        switch outcome {
+        case .ignore:
+            return
+        case .rollOver(let preview):
+            rollOverToNewTask(preview: preview)
+        case .complete(let text, let error):
+            complete(text: text, error: error)
+        }
+    }
+
+    /// Domain + code only. Apple's error strings are not user content, but the
+    /// numbers are what identify the failure and the string adds nothing.
+    private static func describe(_ error: Error?) -> String {
+        guard let error else { return "none" }
+        let nsError = error as NSError
+        return "\(nsError.domain):\(nsError.code)"
+    }
+
+    private func complete(text: String, error: Error?) {
+        guard text.isEmpty else {
+            resolve(.success(text))
+            return
+        }
+        guard let error, !Self.isNoSpeechDetected(error) else {
+            resolve(.failure(VoiceInputError.emptyTranscript))
+            return
+        }
+        resolve(.failure(VoiceInputError.transcriptionFailed(error.localizedDescription)))
+    }
+
+    /// Swaps in a fresh request + task so the audio that keeps arriving is still
+    /// recognised. The swap happens inside the ended task's callback, so the window
+    /// in which buffers are dropped is the silence the endpointer just detected.
+    private func rollOverToNewTask(preview: String) {
+        let newRequest = Self.makeRequest(configuration: configuration)
+
+        // `finish()` or `cancel()` may have won the race while we were deciding.
+        // Publishing `newRequest` under the lock is what makes a `finish()` that
+        // arrives from here on hand its `endAudio()` to the task we are about to
+        // open rather than to the one that just died.
+        var previousTask: SFSpeechRecognitionTask?
+        let swapped = locked { () -> Bool in
+            guard !isFinished, !isStopping else { return false }
+            previousTask = task
+            request = newRequest
+            task = nil
+            return true
+        }
+        guard swapped else {
+            complete(text: preview, error: nil)
+            return
+        }
+        previousTask?.finish()
+
+        let newTask = recognizer.recognitionTask(with: newRequest) { [weak self] result, error in
+            self?.handle(result: result, error: error)
+        }
+        let stale = locked { () -> SFSpeechRecognitionTask? in
+            guard !isFinished else { return newTask }
+            task = newTask
+            return nil
+        }
+        stale?.cancel()
+
+        partialContinuation.yield(preview)
     }
 
     private func resolve(_ outcome: Result<String, Error>) {

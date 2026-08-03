@@ -249,6 +249,18 @@ public final class DictationCoordinator {
                 try await output.paste(outcome.text)
             }
 
+            // Character counts, never the text: they are what tells a truncation in
+            // the recognizer apart from one in the LLM rewrite.
+            Self.log.notice(
+                """
+                finished: action=\(actionID.rawValue, privacy: .public) \
+                engine=\(transcript.engine.rawValue, privacy: .public) \
+                rawChars=\(transcript.text.count, privacy: .public) \
+                outputChars=\(outcome.text.count, privacy: .public) \
+                seconds=\(transcript.duration, format: .fixed(precision: 1), privacy: .public)
+                """
+            )
+
             record(transcript: transcript, outcome: outcome)
             partialText = ""
             state = .finished(outcome)
@@ -347,8 +359,14 @@ public final class DictationCoordinator {
             state = .idle
             return
         }
-        // Detail strings can echo user speech, so never log them.
-        Self.log.error("dictation failed: \(String(describing: wrapped), privacy: .private)")
+        // The kind is content-free and public so a failure is diagnosable from the
+        // log; the description can echo user speech, so it stays private.
+        Self.log.error(
+            """
+            dictation failed: \(wrapped.kind, privacy: .public) \
+            detail: \(String(describing: wrapped), privacy: .private)
+            """
+        )
         state = .failed(wrapped)
         notify(.failed)
     }
