@@ -101,7 +101,11 @@ stateDiagram-v2
 - `isBusy` is true for `preparing`, `recording`, `transcribing`, `formatting`; the
   hotkey uses it to decide between start and stop.
 - `finished(ActionOutcome)` carries the text plus whether it was copied and/or
-  pasted, so the HUD can say what happened.
+  pasted, so the HUD can say what happened. `ActionOutcome.presentation` decides how
+  long it stays: `.transient` (a dictation) times out after `finishedStateDuration`,
+  `.persistent` (an answer) holds the state until `dismissFinished()` — a timer cannot
+  know when the user has finished reading. `.finished` is not `isBusy`, so a waiting
+  answer never blocks the next recording.
 - `failed(VoiceInputError)` carries a typed error with a Japanese description and,
   where actionable, a recovery suggestion (open the right Privacy pane, open
   Settings to enter a key).
@@ -157,6 +161,17 @@ A registration that still fails (another app owns the combination) takes down on
 itself: the remaining shortcuts stay live, and the reason is surfaced next to that
 style in Settings. Losing your dictation shortcut because one style clashed would be
 a bad trade.
+
+**Known blind spot:** `RegisterEventHotKey` returning `noErr` is *not* proof the app
+will receive the key. Observed on macOS 15: a combination already claimed by another
+process registers successfully and the events keep going to the earlier claimant, and
+an Option-bearing combination can be swallowed by the input source before Carbon sees
+it. Either way the app believes it is registered, so Settings shows no warning and the
+shortcut is silently inert. There is no API to detect it, so the only remedy is
+diagnosis: `AppEnvironment` logs one `registered:` line per registration pass
+(purposes and error kinds, never key codes or content) and one `pressed:` line per
+press, in category `hotkey`. No `pressed:` line means the key never arrived, and the
+fix is a different combination.
 
 ### A style is chosen per dictation, not per session
 

@@ -61,11 +61,18 @@ public struct AskAction: VoiceAction {
 
         return ActionOutcome(
             text: answer,
+            // Still on the clipboard, so ⌘V works when the answer *is* what you
+            // wanted to paste.
             copyToClipboard: true,
-            // Follows the same opt-in as a dictation: with auto-paste on, the answer
-            // lands where the user was already typing.
-            pasteIntoFrontmostApp: context.settings.autoPasteEnabled,
-            summary: FormatAction.summary(model: response.model ?? model, elapsed: elapsed)
+            // Deliberately not following `autoPasteEnabled`. That setting means
+            // "put my dictation into the field I am typing in"; an answer is
+            // something to read, and it is shown on screen instead. Dropping a
+            // paragraph into the sentence the user was mid-way through writing is
+            // almost never what they meant.
+            pasteIntoFrontmostApp: false,
+            summary: FormatAction.summary(model: response.model ?? model, elapsed: elapsed),
+            // An answer that disappears after 800ms is not an answer.
+            presentation: .persistent
         )
     }
 

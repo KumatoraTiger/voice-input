@@ -176,6 +176,8 @@ struct AskActionTests {
         #expect(outcome.text == "Set を使います。")
         #expect(outcome.copyToClipboard)
         #expect(outcome.pasteIntoFrontmostApp == false)
+        // The answer is shown, so it must outlive the 800ms confirmation flash.
+        #expect(outcome.presentation == .persistent)
 
         let request = try #require(provider.requests.first)
         #expect(request.model == "gpt-4.1")
@@ -257,8 +259,11 @@ struct AskActionTests {
         )
     }
 
-    @Test("auto paste is only requested when enabled in settings")
-    func autoPaste() async throws {
+    @Test("an answer is never auto-pasted, even with auto-paste on")
+    func answersAreNotPasted() async throws {
+        // `autoPasteEnabled` means "put my dictation into the field I am typing in".
+        // An answer is shown on screen instead; dropping a paragraph into a
+        // half-written sentence is not what that setting asked for.
         let outcome = try await AskAction().run(
             transcript: question(),
             context: ActionContext(
@@ -267,7 +272,22 @@ struct AskActionTests {
                 apiKey: "sk-test"
             )
         )
-        #expect(outcome.pasteIntoFrontmostApp)
+        #expect(outcome.pasteIntoFrontmostApp == false)
+        #expect(outcome.copyToClipboard)
+    }
+
+    @Test("a formatted dictation still flashes and gets out of the way")
+    func formattingStaysTransient() async throws {
+        let outcome = try await FormatAction().run(
+            transcript: Transcript(text: "テスト", engine: .appleOnDevice),
+            context: ActionContext(
+                settings: AppSettings(),
+                llm: FakeLLMProvider(),
+                apiKey: "sk-test"
+            )
+        )
+        #expect(outcome.presentation == .transient)
+        #expect(ActionOutcome(text: "x").presentation == .transient)
     }
 
     @Test("an empty answer is its own error, not an empty transcript")

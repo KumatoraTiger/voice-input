@@ -21,6 +21,19 @@ public struct VoiceActionID: RawRepresentable, Hashable, Sendable, Codable {
     public static let ask = VoiceActionID(rawValue: "ask")
 }
 
+/// How long the finished result stays in front of the user.
+///
+/// The action decides, the same way it decides `copyToClipboard`: only the action
+/// knows whether its output is a confirmation or something the user has to read.
+public enum ResultPresentation: Sendable, Equatable {
+    /// Flash a confirmation and get out of the way. Right for text that has landed
+    /// somewhere the user is about to paste it.
+    case transient
+    /// Stay on screen until dismissed. Right for output whose whole purpose is to be
+    /// read — an answer is useless if it vanishes after 800ms.
+    case persistent
+}
+
 /// What an action produced and what should happen to it.
 public struct ActionOutcome: Sendable, Equatable {
     public var text: String
@@ -30,17 +43,21 @@ public struct ActionOutcome: Sendable, Equatable {
     public var pasteIntoFrontmostApp: Bool
     /// Shown in the history / HUD, e.g. "gpt-4.1-mini · 320ms".
     public var summary: String?
+    /// Whether the HUD holds this result until the user dismisses it.
+    public var presentation: ResultPresentation
 
     public init(
         text: String,
         copyToClipboard: Bool = true,
         pasteIntoFrontmostApp: Bool = false,
-        summary: String? = nil
+        summary: String? = nil,
+        presentation: ResultPresentation = .transient
     ) {
         self.text = text
         self.copyToClipboard = copyToClipboard
         self.pasteIntoFrontmostApp = pasteIntoFrontmostApp
         self.summary = summary
+        self.presentation = presentation
     }
 }
 

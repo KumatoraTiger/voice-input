@@ -50,7 +50,11 @@ struct RecordingHUD: View {
                     .accessibilityLabel("入力レベル")
                     .accessibilityValue("\(Int(level * 100))%")
             }
-            transcriptView
+            if let body = phase.body {
+                answerView(body)
+            } else {
+                transcriptView
+            }
             if mode == .dictation, phase.showsStylePicker, styles.count > 1 {
                 stylePicker
             }
@@ -60,7 +64,7 @@ struct RecordingHUD: View {
             footer
         }
         .padding(14)
-        .frame(width: 360, alignment: .leading)
+        .frame(width: phase.body == nil ? 360 : 460, alignment: .leading)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -81,7 +85,7 @@ struct RecordingHUD: View {
             Text(phase.title(mode))
                 .font(.headline)
             Spacer(minLength: 8)
-            if case .finished(let summary) = phase, let summary {
+            if case .finished(let summary, _) = phase, let summary {
                 Text(summary)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -108,6 +112,25 @@ struct RecordingHUD: View {
                 .font(.callout)
                 .foregroundStyle(.tertiary)
         }
+    }
+
+    /// The answer, shown until the user dismisses it.
+    ///
+    /// Scrolls rather than growing without bound: the panel is parked over whatever
+    /// the user is working in, so a long answer must not cover the screen. The wheel
+    /// works without the panel becoming key, which is why this can stay in a
+    /// non-activating panel at all.
+    private func answerView(_ body: String) -> some View {
+        ScrollView(.vertical) {
+            Text(body)
+                .font(.callout)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxHeight: 280)
+        .scrollBounceBehavior(.basedOnSize)
+        .accessibilityLabel("回答")
     }
 
     /// The style row. Clicking a chip switches the dictation in flight; the panel
@@ -208,6 +231,17 @@ struct RecordingHUD: View {
                 .controlSize(.small)
                 .accessibilityLabel("キャンセル")
             }
+        } else if phase.body != nil {
+            // No timer will take this away, so the way out has to be visible.
+            HStack(spacing: 6) {
+                Text("クリップボードにもコピー済み")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                Spacer()
+                Button(showsEscapeHint ? "閉じる（⎋）" : "閉じる") { onDismiss() }
+                    .controlSize(.small)
+                    .accessibilityLabel("閉じる")
+            }
         }
     }
 
@@ -282,7 +316,16 @@ struct RecordingHUD_Previews: PreviewProvider {
                 level: 0.4
             )
             RecordingHUD(phase: .formatting, mode: .ask)
-            RecordingHUD(phase: .finished(summary: "gpt-4.1-mini · 0.8s"))
+            RecordingHUD(
+                phase: .finished(
+                    summary: "gpt-4.1 · 2.1s",
+                    body: "Set を通すのが一番短いです。\n\n```swift\nArray(Set(items))\n```\n\n"
+                        + "順序を保ちたい場合は、見た要素を Set に入れながら filter します。"
+                ),
+                mode: .ask,
+                showsEscapeHint: true
+            )
+            RecordingHUD(phase: .finished(summary: "gpt-4.1-mini · 0.8s", body: nil))
             RecordingHUD(phase: .failed(.missingAPIKey(.openAI)))
             RecordingHUD(phase: .failed(.microphonePermissionDenied))
         }

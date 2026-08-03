@@ -4,6 +4,7 @@ import Observation
 import SwiftUI
 import VoiceInputCore
 import VoiceInputPlatform
+import os
 
 /// Which Settings tab is showing.
 ///
@@ -93,6 +94,8 @@ final class AppEnvironment {
     @ObservationIgnored private var welcomeWindow: WelcomeWindowController?
     @ObservationIgnored private var isStarted = false
     @ObservationIgnored private var activationObserver: (any NSObjectProtocol)?
+
+    private static let log = Logger(subsystem: "io.github.voiceinput", category: "hotkey")
 
     init(
         coordinator: DictationCoordinator,
@@ -305,6 +308,20 @@ final class AppEnvironment {
             hotkeyError = hotkeys.failures[.dictation].map {
                 message(for: $0, binding: settings.hotkey)
             }
+
+            // Purpose names and error kinds only — never a key code, never content.
+            // A shortcut that silently does nothing is undiagnosable otherwise.
+            let requested = plan.assignments.map(\.purpose.logName).sorted()
+            let failed = hotkeys.failures
+                .map { "\($0.key.logName):\($0.value.logKind)" }
+                .sorted()
+            Self.log.notice(
+                """
+                registered: requested=[\(requested.joined(separator: " "), privacy: .public)] \
+                failed=[\(failed.joined(separator: " "), privacy: .public)] \
+                axTrusted=\(AXIsProcessTrusted(), privacy: .public)
+                """
+            )
         }
 
         // A style shortcut rejected before registration (a duplicate) and one Carbon
@@ -348,6 +365,13 @@ final class AppEnvironment {
     /// already running, either switches that recording instead of starting or
     /// stopping one — see `DictationCoordinator.toggle`.
     private func handleHotkeyPress(_ purpose: HotkeyPurpose) {
+        Self.log.notice(
+            """
+            pressed: purpose=\(purpose.logName, privacy: .public) \
+            action=\(purpose.actionID.rawValue, privacy: .public) \
+            mode=\(self.settings.hotkeyMode.rawValue, privacy: .public)
+            """
+        )
         rememberFrontmostApp()
         switch settings.hotkeyMode {
         case .toggle:

@@ -31,6 +31,11 @@ a side effect.
    `pasteIntoFrontmostApp` explicitly (auto-paste needs Accessibility and is off by
    default), and set `summary` to something the HUD can show, e.g.
    `"gpt-4.1-mini · 320ms"`. `summary` must never contain user text.
+   `presentation` decides whether the HUD flashes a confirmation (`.transient`, the
+   default) or shows the text and waits for the user (`.persistent`). Pick
+   `.persistent` only for output the user has to *read* — and note that it is then the
+   HUD, not the clipboard, that delivers the result, so auto-pasting it as well is
+   usually wrong (see `AskAction`).
 
 5. **Register it** in `ActionRegistry.live`
    (`Sources/VoiceInputCore/Formatting/ActionRegistry.swift`). If the action gets

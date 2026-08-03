@@ -22,6 +22,17 @@ public enum HotkeyPurpose: Hashable, Sendable {
         case .ask: return .ask
         }
     }
+
+    /// Content-free name, safe to log as `.public`. A shortcut that silently does
+    /// nothing is otherwise undiagnosable — the style's UUID is left out because
+    /// which purposes registered is the useful part.
+    public var logName: String {
+        switch self {
+        case .dictation: return "dictation"
+        case .ask: return "ask"
+        case .style: return "style"
+        }
+    }
 }
 
 /// One shortcut the app wants registered.

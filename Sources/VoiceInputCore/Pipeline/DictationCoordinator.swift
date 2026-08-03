@@ -179,6 +179,13 @@ public final class DictationCoordinator {
 
     public var effectiveStyleID: UUID? { effectiveStyle?.id }
 
+    /// Clears a result the user has finished reading. No-op unless the pipeline is
+    /// sitting in `.finished`, so it cannot cut short a run in flight.
+    public func dismissFinished() {
+        guard case .finished = state else { return }
+        state = .idle
+    }
+
     public func cancel() {
         startTask?.cancel()
         processTask?.cancel()
@@ -319,6 +326,9 @@ public final class DictationCoordinator {
             state = .finished(outcome)
             notify(.finished)
 
+            // A persistent result waits for `dismissFinished()`: it is on screen to
+            // be read, and a timer cannot know when the user is done reading.
+            guard outcome.presentation == .transient else { return }
             if finishedStateDuration > .zero {
                 try? await Task.sleep(for: finishedStateDuration)
             }

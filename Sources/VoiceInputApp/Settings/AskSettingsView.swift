@@ -22,7 +22,7 @@ struct AskSettingsView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Text(
-                    "このキーで録音すると、話した内容を質問として LLM に送り、回答をクリップボードにコピーします。"
+                    "このキーで録音すると、話した内容を質問として LLM に送り、回答を画面に表示します。"
                         + "未設定のあいだは質問機能は動きません。"
                 )
                 .font(.caption)
@@ -67,8 +67,8 @@ struct AskSettingsView: View {
                 }
                 .pickerStyle(.radioGroup)
                 Text(
-                    "回答はテキストとしてクリップボードにコピーされるだけです。"
-                        + "コマンドの実行やファイルへのアクセスは行いません。"
+                    "回答は画面に表示され、Esc か「閉じる」で消えます。クリップボードにもコピーされますが、"
+                        + "自動ペーストの対象にはなりません。コマンドの実行やファイルへのアクセスも行いません。"
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)

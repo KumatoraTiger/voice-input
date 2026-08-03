@@ -13,9 +13,9 @@ final class HUDWindowController {
     private let environment: AppEnvironment
     private var panel: NSPanel?
     private var isShowing = false
-    /// The user closed the current failure; do not pop the HUD back up for it.
-    /// Reset as soon as the pipeline leaves `.failed`.
-    private var failureDismissed = false
+    /// The user closed the current result or failure; do not pop the HUD back up for
+    /// it. Reset as soon as the pipeline moves on.
+    private var dismissedByUser = false
     private var escapeMonitors: [Any] = []
 
     init(environment: AppEnvironment) {
@@ -27,12 +27,14 @@ final class HUDWindowController {
     func update(for state: DictationState) {
         switch state {
         case .idle:
-            failureDismissed = false
+            dismissedByUser = false
             hide()
-        case .failed:
-            if failureDismissed { hide() } else { show() }
-        case .preparing, .recording, .transcribing, .formatting, .finished:
-            failureDismissed = false
+        // Both of these can sit on screen waiting for the user, so both have to
+        // remember having been closed — otherwise any redraw would reopen them.
+        case .failed, .finished:
+            if dismissedByUser { hide() } else { show() }
+        case .preparing, .recording, .transcribing, .formatting:
+            dismissedByUser = false
             show()
         }
     }
@@ -110,7 +112,10 @@ final class HUDWindowController {
             environment: environment,
             onCancel: { [weak self] in self?.environment.coordinator.cancel() },
             onDismiss: { [weak self] in
-                self?.failureDismissed = true
+                self?.dismissedByUser = true
+                // Returns the state machine to idle when a result was waiting, so
+                // the menu-bar icon stops saying "done" the moment the panel goes.
+                self?.environment.coordinator.dismissFinished()
                 self?.hide()
             }
         )
@@ -175,7 +180,8 @@ final class HUDWindowController {
         if environment.coordinator.state.isBusy {
             environment.coordinator.cancel()
         } else {
-            failureDismissed = true
+            dismissedByUser = true
+            environment.coordinator.dismissFinished()
             hide()
         }
     }

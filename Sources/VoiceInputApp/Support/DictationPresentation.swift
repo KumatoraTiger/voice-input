@@ -59,7 +59,9 @@ enum HUDPhase: Equatable {
     case recording
     case transcribing
     case formatting
-    case finished(summary: String?)
+    /// `body` is the produced text, shown only when the result is `.persistent` —
+    /// a dictation's text belongs in the app the user is pasting into, not here.
+    case finished(summary: String?, body: String?)
     case failed(VoiceInputError)
 
     /// `nil` for `.idle` — the HUD must never be on screen when nothing is going on.
@@ -70,7 +72,11 @@ enum HUDPhase: Equatable {
         case .recording: self = .recording
         case .transcribing: self = .transcribing
         case .formatting: self = .formatting
-        case .finished(let outcome): self = .finished(summary: outcome.summary)
+        case .finished(let outcome):
+            self = .finished(
+                summary: outcome.summary,
+                body: outcome.presentation == .persistent ? outcome.text : nil
+            )
         case .failed(let error): self = .failed(error)
         }
     }
@@ -121,6 +127,12 @@ enum HUDPhase: Equatable {
         case .preparing, .recording, .transcribing, .formatting: return true
         case .finished, .failed: return false
         }
+    }
+
+    /// A result that stays on screen needs a way out, since no timer will remove it.
+    var body: String? {
+        guard case .finished(_, let body) = self else { return nil }
+        return body
     }
 }
 

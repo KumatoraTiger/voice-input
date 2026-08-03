@@ -34,6 +34,17 @@ public enum HotkeyError: Error, LocalizedError, Equatable {
         }
     }
 
+    /// A stable, content-free name for the failure, safe to log as `.public`.
+    public var logKind: String {
+        switch self {
+        case .registrationFailed(let status): return "registrationFailed(\(status))"
+        case .handlerInstallationFailed(let status): return "handlerInstallationFailed(\(status))"
+        case .accessibilityRequired: return "accessibilityRequired"
+        case .tooFewModifiers: return "tooFewModifiers"
+        case .modifierOnlyUnsupported: return "modifierOnlyUnsupported"
+        }
+    }
+
     public var recoverySuggestion: String? {
         switch self {
         case .registrationFailed, .handlerInstallationFailed:

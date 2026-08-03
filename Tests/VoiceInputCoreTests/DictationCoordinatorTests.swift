@@ -438,12 +438,70 @@ struct DictationCoordinatorTests {
         coordinator.stopAndProcess()
         await coordinator.waitUntilIdle()
 
-        #expect(coordinator.state == .idle)
+        // The answer waits on screen: `finishedStateDuration` is zero in this
+        // harness, so anything but `.finished` here means it was timed out away.
+        guard case .finished(let outcome) = coordinator.state else {
+            Issue.record("expected .finished, got \(coordinator.state)")
+            return
+        }
+        #expect(outcome.text == "並行処理で安全に渡せる型のことです。")
+        #expect(outcome.presentation == .persistent)
         #expect(harness.output.copiedTexts == ["並行処理で安全に渡せる型のことです。"])
         #expect(
             harness.provider.requests.first?.systemPrompt == AskPromptBuilder.systemPrompt
         )
         #expect(coordinator.history.first?.rawText == "Swift の Sendable とは")
+
+        coordinator.dismissFinished()
+        #expect(coordinator.state == .idle)
+    }
+
+    @Test("dismissing a result is ignored unless one is waiting")
+    func dismissFinishedIsGuarded() async throws {
+        let harness = makeHarness()
+        let coordinator = harness.coordinator
+
+        coordinator.dismissFinished()
+        #expect(coordinator.state == .idle)
+
+        coordinator.start(action: .ask)
+        await coordinator.waitUntilIdle()
+        // Mid-recording it must not double as a cancel.
+        coordinator.dismissFinished()
+        #expect(coordinator.state == .recording)
+    }
+
+    @Test("a formatted dictation still returns to idle on its own")
+    func formattedResultTimesOut() async throws {
+        let harness = makeHarness()
+        let coordinator = harness.coordinator
+
+        coordinator.start()
+        await coordinator.waitUntilIdle()
+        coordinator.stopAndProcess()
+        await coordinator.waitUntilIdle()
+
+        #expect(coordinator.state == .idle)
+    }
+
+    @Test("a waiting answer does not block the next recording")
+    func askResultDoesNotBlockTheNextRun() async throws {
+        let harness = makeHarness(reply: "答えです。")
+        let coordinator = harness.coordinator
+
+        coordinator.start(action: .ask)
+        await coordinator.waitUntilIdle()
+        coordinator.stopAndProcess()
+        await coordinator.waitUntilIdle()
+        guard case .finished = coordinator.state else {
+            Issue.record("expected .finished, got \(coordinator.state)")
+            return
+        }
+
+        // `.finished` is not busy, so the hotkey still starts a new run.
+        coordinator.toggle()
+        await coordinator.waitUntilIdle()
+        #expect(coordinator.state == .recording)
     }
 
     @Test("formattingEnabled = false does not disable questions")
@@ -482,7 +540,10 @@ struct DictationCoordinatorTests {
         // …and the same shortcut again does stop.
         coordinator.toggle(action: .ask)
         await coordinator.waitUntilIdle()
-        #expect(coordinator.state == .idle)
+        guard case .finished = coordinator.state else {
+            Issue.record("expected the answer to be waiting, got \(coordinator.state)")
+            return
+        }
         #expect(
             harness.provider.requests.first?.systemPrompt == AskPromptBuilder.systemPrompt
         )

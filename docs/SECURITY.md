@@ -146,9 +146,12 @@ Where the licence stops, and why it is still safe to give:
 - **No memory.** One recording is one question; nothing from a previous question or
   answer is carried into the next call. There is no conversation state to poison, and
   nothing about a question outlives the process.
-- **The same practical caveat as formatting, and it bites harder here.** An answer can
-  be long, and with auto-paste on it is typed into whatever is frontmost. Auto-paste
-  stays off by default.
+- **An answer is never auto-pasted.** `AskAction` returns
+  `pasteIntoFrontmostApp: false` regardless of `autoPasteEnabled`: that setting means
+  "put my dictation in the field I am typing in", and an answer is shown on screen
+  instead (`ResultPresentation.persistent`). So the formatting path's practical caveat
+  — that text can be typed into whatever is frontmost — does not apply here. The
+  answer is still placed on the clipboard, which is the only way it leaves the HUD.
 
 ## Permissions
 
