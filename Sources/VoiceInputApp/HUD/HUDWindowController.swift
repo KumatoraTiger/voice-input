@@ -3,6 +3,7 @@ import ApplicationServices
 import SwiftUI
 import VoiceInputCore
 import VoiceInputPlatform
+import os
 
 /// Hosts `RecordingHUD` in a floating panel that never takes focus.
 ///
@@ -17,6 +18,8 @@ final class HUDWindowController {
     /// it. Reset as soon as the pipeline moves on.
     private var dismissedByUser = false
     private var escapeMonitors: [Any] = []
+
+    private static let log = Logger(subsystem: "io.github.voiceinput", category: "hud")
 
     init(environment: AppEnvironment) {
         self.environment = environment
@@ -158,7 +161,12 @@ final class HUDWindowController {
             escapeMonitors.append(local)
         }
 
-        guard AXIsProcessTrusted() else { return }
+        guard AXIsProcessTrusted() else {
+            // Esc is then reachable only while one of our own windows is frontmost.
+            // The HUD's 閉じる button is what the user is left with.
+            Self.log.notice("escape monitors: local=1 global=0 (not trusted)")
+            return
+        }
         if let global = NSEvent.addGlobalMonitorForEvents(
             matching: .keyDown,
             handler: {
