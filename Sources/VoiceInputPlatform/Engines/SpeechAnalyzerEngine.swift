@@ -143,7 +143,10 @@ public struct SpeechAnalyzerEngine: TranscriptionEngine {
                 try await installation.downloadAndInstall()
             }
             // Reservations keep the OS from reclaiming the model under disk pressure.
-            if !AssetInventory.reservedLocales.contains(where: { $0 == locale }) {
+            // `reservedLocales` is an async property, so it is read into a local
+            // rather than inlined into the condition.
+            let reserved = await AssetInventory.reservedLocales
+            if !reserved.contains(where: { $0 == locale }) {
                 _ = try await AssetInventory.reserve(locale: locale)
             }
         } catch {
