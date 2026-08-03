@@ -8,10 +8,13 @@ import VoiceInputCore
 public enum HotkeyFormatting {
     // MARK: - NSEvent → HotkeyBinding
 
-    /// Builds a binding from a key-down event captured by a recorder field.
+    /// Builds a key-plus-modifiers binding from a key-down event captured by a
+    /// recorder field.
     ///
     /// Returns `nil` for events that would make a useless shortcut: a bare key with
-    /// no modifiers, or a press of a modifier key on its own.
+    /// no modifiers, or a press of a modifier key on its own. A modifier-only
+    /// shortcut never produces a key-down event at all — see
+    /// `modifierOnlyBinding(from:)`.
     public static func binding(from event: NSEvent) -> HotkeyBinding? {
         guard event.type == .keyDown || event.type == .keyUp else { return nil }
 
@@ -22,6 +25,17 @@ public enum HotkeyFormatting {
         guard !modifierKeyCodes.contains(keyCode) else { return nil }
 
         return HotkeyBinding(keyCode: keyCode, modifiers: modifiers)
+    }
+
+    /// Builds a modifier-only binding (⇧⌃, ⌥⌘, …) from a `flagsChanged` event.
+    ///
+    /// Requires **two** modifiers: a single one would fire whenever the user typed
+    /// a capital letter or reached for any other shortcut.
+    public static func modifierOnlyBinding(from event: NSEvent) -> HotkeyBinding? {
+        guard event.type == .flagsChanged else { return nil }
+        let modifiers = carbonModifiers(from: event.modifierFlags)
+        guard modifiers.nonzeroBitCount >= 2 else { return nil }
+        return .modifiersOnly(modifiers)
     }
 
     /// Maps `NSEvent.ModifierFlags` onto the Carbon mask `RegisterEventHotKey` wants.
@@ -36,14 +50,23 @@ public enum HotkeyFormatting {
 
     // MARK: - HotkeyBinding → display
 
-    /// e.g. `⌥Space`, `⌃⇧D`. Modifiers use Apple's canonical ⌃⌥⇧⌘ order.
+    /// e.g. `⌥Space`, `⌃⇧D`, or `⌃⇧` for a modifier-only shortcut. Modifiers use
+    /// Apple's canonical ⌃⌥⇧⌘ order.
     public static func displayString(for binding: HotkeyBinding) -> String {
+        var result = modifierString(for: binding.modifiers)
+        if let keyCode = binding.keyCode {
+            result += keyName(for: keyCode)
+        }
+        return result
+    }
+
+    /// Just the ⌃⌥⇧⌘ glyphs, in Apple's canonical order.
+    public static func modifierString(for modifiers: UInt32) -> String {
         var result = ""
-        if binding.modifiers & UInt32(controlKey) != 0 { result += "⌃" }
-        if binding.modifiers & UInt32(optionKey) != 0 { result += "⌥" }
-        if binding.modifiers & UInt32(shiftKey) != 0 { result += "⇧" }
-        if binding.modifiers & UInt32(cmdKey) != 0 { result += "⌘" }
-        result += keyName(for: binding.keyCode)
+        if modifiers & UInt32(controlKey) != 0 { result += "⌃" }
+        if modifiers & UInt32(optionKey) != 0 { result += "⌥" }
+        if modifiers & UInt32(shiftKey) != 0 { result += "⇧" }
+        if modifiers & UInt32(cmdKey) != 0 { result += "⌘" }
         return result
     }
 

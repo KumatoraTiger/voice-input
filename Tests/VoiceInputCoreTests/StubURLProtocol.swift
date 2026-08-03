@@ -72,11 +72,18 @@ final class StubURLProtocol: URLProtocol {
 
 /// One stubbed endpoint plus the `URLSession` that reaches it.
 final class StubTransport {
+    /// What a provider is handed as its base/endpoint URL.
+    let baseURL: URL
+    /// The URL actually stubbed — `baseURL` plus `path`.
     let endpoint: URL
     let session: URLSession
 
-    init(respond: @escaping StubURLProtocol.Responder = { _ in (200, Data()) }) {
-        endpoint = URL(string: "https://stub.invalid/\(UUID().uuidString)")!
+    /// `path` is for providers that build the URL themselves (Gemini puts the model
+    /// in the path), so the test asserts on the URL the provider constructed rather
+    /// than one it was handed.
+    init(path: String = "", respond: @escaping StubURLProtocol.Responder = { _ in (200, Data()) }) {
+        baseURL = URL(string: "https://stub.invalid/\(UUID().uuidString)")!
+        endpoint = path.isEmpty ? baseURL : URL(string: baseURL.absoluteString + path)!
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [StubURLProtocol.self]
         session = URLSession(configuration: configuration)

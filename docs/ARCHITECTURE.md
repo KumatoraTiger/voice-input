@@ -4,7 +4,7 @@
 
 ```mermaid
 flowchart TD
-    HK["Global hotkey<br/>HotkeyMonitor (Carbon)"] -->|toggle / push-to-talk| CO
+    HK["Global hotkey<br/>HotkeyMonitor<br/>Carbon, or flagsChanged<br/>for modifier-only"] -->|toggle / push-to-talk| CO
 
     subgraph App["VoiceInputApp — SwiftUI menu bar"]
         MENU["MenuBarExtra + Settings"]
@@ -14,7 +14,7 @@ flowchart TD
         CO["DictationCoordinator<br/>@MainActor @Observable"]
         ACT["ActionRegistry<br/>FormatAction / RawAction"]
         PROMPT["FormattingPromptBuilder"]
-        LLMREG["LLMProviderRegistry<br/>OpenAI · Anthropic"]
+        LLMREG["LLMProviderRegistry<br/>OpenAI · Anthropic · Gemini"]
         CLOUDASR["OpenAITranscriptionEngine<br/>(pure HTTP + WAVEncoder)"]
         SEC["SecretStore → Keychain"]
         SET["SettingsStore → UserDefaults"]
@@ -107,6 +107,25 @@ stateDiagram-v2
   Settings to enter a key).
 - Cancel is always available: it tears down the session, discards audio and text,
   and returns to `idle` without producing output.
+
+### Hotkeys have two backends
+
+`HotkeyBinding.keyCode` is optional, and that decides the mechanism:
+
+| Binding | Mechanism | Accessibility |
+|---|---|---|
+| key + modifiers (⌥Space) | Carbon `RegisterEventHotKey` | not needed |
+| modifiers only (⇧⌃) | `NSEvent` global + local `flagsChanged` monitors | **required** |
+
+Carbon cannot express a modifier-only shortcut at all, and watching modifier flags
+globally is exactly what Accessibility gates. The Carbon path stays the default so
+that a fresh install can dictate before granting anything.
+
+The decision of *when* held modifiers count as a press lives in
+`ModifierHotkeyDetector` (Core, unit-tested): in `.toggle` mode the shortcut fires
+on **release**, and only if no other key and no extra modifier joined the hold —
+otherwise ⇧⌃ would fire every time the user pressed ⌃⇧→. `.pushToTalk` brackets the
+hold directly and needs no such guard.
 
 ## Threading and actor rules
 

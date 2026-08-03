@@ -15,6 +15,9 @@ public enum VoiceInputError: Error, Sendable, Equatable {
     /// Non-2xx from a provider. `body` is truncated and must never contain the key.
     case providerHTTPError(provider: String, status: Int, body: String)
     case providerDecodingFailed(provider: String, detail: String)
+    /// The configured model name could not be turned into a request. Only reachable
+    /// for providers that put the model in the URL path (Gemini).
+    case invalidModelName(provider: String, model: String)
     case networkFailure(String)
     case cancelled
 }
@@ -44,6 +47,8 @@ extension VoiceInputError: LocalizedError {
             return "\(provider) がエラーを返しました (HTTP \(status)): \(body)"
         case .providerDecodingFailed(let provider, let detail):
             return "\(provider) のレスポンスを解釈できませんでした: \(detail)"
+        case .invalidModelName(let provider, let model):
+            return "\(provider) のモデル名が不正です: \(model)"
         case .networkFailure(let detail):
             return "ネットワークエラー: \(detail)"
         case .cancelled:
@@ -60,6 +65,8 @@ extension VoiceInputError: LocalizedError {
             return "システム設定 → プライバシーとセキュリティ → アクセシビリティ で VoiceInput を許可してください。"
         case .missingAPIKey:
             return "設定 → API キー から設定してください。"
+        case .invalidModelName:
+            return "設定 → 整形 でモデル名を確認してください。空欄にすると既定のモデルを使います。"
         default:
             return nil
         }

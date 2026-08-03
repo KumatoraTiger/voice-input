@@ -168,9 +168,13 @@ struct ActionTests {
         #expect(ActionRegistry.live.action(for: VoiceActionID(rawValue: "nope")) == nil)
 
         let providers = LLMProviderRegistry.live()
-        #expect(providers.all.count == 2)
+        #expect(providers.all.count == LLMProviderID.allCases.count)
         #expect(providers.provider(for: .openAI)?.defaultModel == "gpt-4.1-mini")
         #expect(providers.provider(for: .anthropic)?.defaultModel == "claude-haiku-4-5")
+        #expect(providers.provider(for: .gemini)?.defaultModel == "gemini-3.5-flash-lite")
+        // Settings lists every id, so a registered-but-missing provider would show
+        // up as an unpickable row.
+        #expect(LLMProviderID.allCases.allSatisfy { providers.provider(for: $0) != nil })
     }
 }
 

@@ -21,8 +21,12 @@ struct SettingsStoreTests {
         settings.localeIdentifier = "en-US"
         settings.transcriptionModel = "whisper-1"
         settings.vocabulary = ["Shaperon", "SwiftPM"]
-        settings.llmProvider = .anthropic
-        settings.models = [.openAI: "gpt-4.1", .anthropic: "claude-haiku-4-5"]
+        settings.llmProvider = .gemini
+        settings.models = [
+            .openAI: "gpt-4.1",
+            .anthropic: "claude-haiku-4-5",
+            .gemini: "gemini-3.5-flash-lite",
+        ]
         settings.formattingEnabled = false
         settings.autoPasteEnabled = true
         settings.playSounds = false

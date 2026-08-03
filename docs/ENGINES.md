@@ -122,7 +122,8 @@ respectively). Prices change — **check
 <https://developers.openai.com/api/docs/pricing> before relying on these numbers.**
 
 The formatting LLM is billed separately by tokens: see
-<https://openai.com/api/pricing/> and <https://www.anthropic.com/pricing>. A typical
+<https://openai.com/api/pricing/>, <https://www.anthropic.com/pricing> and
+<https://ai.google.dev/pricing>. A typical
 dictation is a few hundred tokens in and out, so the transcription side usually
 dominates only if you use cloud STT.
 

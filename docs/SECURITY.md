@@ -10,7 +10,7 @@ applications. This document states exactly what it does with each of those.
   (`Sources/VoiceInputCore/Secrets/KeychainSecretStore.swift`).
 - Each key is a separate item, so an OpenAI key used only for transcription and an
   Anthropic key used only for formatting stay independent:
-  - `llm.apiKey.openAI`, `llm.apiKey.anthropic`
+  - `llm.apiKey.openAI`, `llm.apiKey.anthropic`, `llm.apiKey.gemini`
   - `asr.apiKey.openAICloud`
 - Keys are entered by the user in the app's Settings window. There is **no `.env`,
   no config file and no build-time key** in this project.
@@ -29,10 +29,11 @@ applications. This document states exactly what it does with each of those.
 | Apple SpeechAnalyzer | off | no | no | — nothing leaves the Mac |
 | Apple on-device | OpenAI | no | **yes** | `api.openai.com` |
 | Apple on-device | Anthropic | no | **yes** | `api.anthropic.com` |
-| Apple SpeechAnalyzer | OpenAI / Anthropic | no | **yes** | as above |
+| Apple on-device | Google Gemini | no | **yes** | `generativelanguage.googleapis.com` |
+| Apple SpeechAnalyzer | OpenAI / Anthropic / Gemini | no | **yes** | as above |
 | OpenAI cloud STT | off | **yes** | **yes** (returned text) | `api.openai.com` |
 | OpenAI cloud STT | OpenAI | **yes** | **yes** | `api.openai.com` |
-| OpenAI cloud STT | Anthropic | **yes** (to OpenAI) | **yes** (to Anthropic) | both |
+| OpenAI cloud STT | Anthropic / Gemini | **yes** (to OpenAI) | **yes** (to the LLM) | both |
 
 Read it as: **audio only ever leaves the machine if you select the OpenAI cloud
 engine. Text only ever leaves the machine if LLM formatting is enabled.** Turn both
@@ -50,7 +51,17 @@ What is sent, precisely:
 
 Once data reaches a provider, that provider's policy governs it. Read the relevant
 one before enabling a cloud path:
-<https://openai.com/policies/> · <https://www.anthropic.com/legal/privacy>.
+<https://openai.com/policies/> · <https://www.anthropic.com/legal/privacy> ·
+<https://ai.google.dev/gemini-api/terms>.
+
+Note on Gemini specifically: Google's terms distinguish the **free tier** from paid
+use, and the free tier is documented as allowing human review of the content you
+send. If the transcript is confidential, check which tier your key is on before
+enabling this provider.
+
+The key is sent in the `x-goog-api-key` header, never as the `?key=` query parameter
+Google also accepts — a secret in a URL survives in proxy logs, browser history and
+crash reports long after the request.
 
 ## What is never persisted
 
@@ -98,12 +109,33 @@ person at the keyboard, someone else in the room, and audio playing nearby. So:
 |---|---|---|
 | Microphone | always | to record you |
 | Speech Recognition | Apple engines only | `SFSpeechRecognizer` / `SpeechAnalyzer` |
-| Accessibility | only when 自動ペースト is enabled | synthesize ⌘V into the frontmost app |
+| Accessibility | 自動ペースト, or a modifier-only hotkey | synthesize ⌘V into the frontmost app; observe modifier keys globally |
 
-Accessibility is the powerful one: it lets the app post key events to other
-applications. It is requested only when you turn on auto-paste, and revoking it in
-System Settings → プライバシーとセキュリティ → アクセシビリティ disables only that
-feature.
+Accessibility is the powerful one, and it is the only permission that touches other
+applications. Nothing requests it at first launch — it is asked for when you turn on
+auto-paste, or when you bind the hotkey to modifiers alone (⇧⌃). Revoking it in
+System Settings → プライバシーとセキュリティ → アクセシビリティ disables exactly those
+two features and nothing else.
+
+### What the hotkey monitor observes
+
+The default hotkey shape (a key plus modifiers, ⌥Space) goes through Carbon's
+`RegisterEventHotKey`, which observes **nothing** — the OS delivers a callback only
+for that one combination. No permission, no event stream.
+
+A modifier-only hotkey (⇧⌃) cannot be expressed in Carbon, so it is detected from
+`NSEvent` monitors. What that means concretely:
+
+- A **`flagsChanged`** monitor runs for as long as such a hotkey is configured. These
+  events carry only the set of modifier keys currently held — no characters.
+- A **`keyDown`** monitor is installed *only while the hotkey's modifiers are held*,
+  and removed the moment they are released. It exists so that ⌃⇧→ (select word) is
+  not mistaken for the shortcut. Only `NSEvent.type` is read; the character, the
+  key code and the target application are never touched, never logged, and never
+  stored. In `push-to-talk` mode it is never installed at all.
+
+If you would rather the app never install a keyboard monitor, use a key-plus-modifier
+hotkey — that is why it remains the default.
 
 ## Code signing and the sandbox
 

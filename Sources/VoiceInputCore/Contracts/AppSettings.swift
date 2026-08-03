@@ -19,15 +19,35 @@ public struct FormattingStyle: Identifiable, Codable, Sendable, Equatable, Hasha
 }
 
 /// A global hotkey, stored as a Carbon key code plus modifier mask.
+///
+/// Two shapes, registered through different mechanisms (see `HotkeyMonitor`):
+/// - **key + modifiers** (`keyCode != nil`), e.g. ⌥Space — Carbon
+///   `RegisterEventHotKey`, no Accessibility permission needed.
+/// - **modifiers only** (`keyCode == nil`), e.g. ⇧⌃ — Carbon cannot express this,
+///   so it is detected from `flagsChanged` events, which *does* need Accessibility.
 public struct HotkeyBinding: Codable, Sendable, Equatable, Hashable {
-    public var keyCode: UInt32
-    /// Carbon modifier mask (`cmdKey`, `optionKey`, …).
+    /// Carbon virtual key code, or `nil` when the modifier combination itself is
+    /// the shortcut.
+    public var keyCode: UInt32?
+    /// Carbon modifier mask (`cmdKey`, `optionKey`, …). Never 0.
     public var modifiers: UInt32
 
-    public init(keyCode: UInt32, modifiers: UInt32) {
+    public init(keyCode: UInt32?, modifiers: UInt32) {
         self.keyCode = keyCode
         self.modifiers = modifiers
     }
+
+    /// A shortcut made of modifiers alone, e.g. ⇧⌃.
+    public static func modifiersOnly(_ modifiers: UInt32) -> HotkeyBinding {
+        HotkeyBinding(keyCode: nil, modifiers: modifiers)
+    }
+
+    /// Whether this binding needs the `flagsChanged` path (and so Accessibility).
+    public var isModifierOnly: Bool { keyCode == nil }
+
+    /// How many distinct modifiers the mask holds. A modifier-only shortcut needs
+    /// at least two, or it would fire every time the user typed a capital letter.
+    public var modifierCount: Int { modifiers.nonzeroBitCount }
 
     /// ⌥Space — chosen because it is rarely taken by other apps.
     public static let defaultToggle = HotkeyBinding(keyCode: 49, modifiers: 1 << 11)

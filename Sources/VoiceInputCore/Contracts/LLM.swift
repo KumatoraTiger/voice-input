@@ -3,6 +3,7 @@ import Foundation
 public enum LLMProviderID: String, Codable, Sendable, CaseIterable, Hashable {
     case openAI
     case anthropic
+    case gemini
 }
 
 // Makes `[LLMProviderID: String]` encode as a JSON object rather than a flat array.

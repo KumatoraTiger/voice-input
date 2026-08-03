@@ -85,6 +85,7 @@ final class AppEnvironment {
     @ObservationIgnored private var hudStorage: HUDWindowController?
     @ObservationIgnored private var welcomeWindow: WelcomeWindowController?
     @ObservationIgnored private var isStarted = false
+    @ObservationIgnored private var activationObserver: (any NSObjectProtocol)?
 
     init(
         coordinator: DictationCoordinator,
@@ -170,7 +171,27 @@ final class AppEnvironment {
         applyLoginItem()
         observeSettings()
         observeState()
+        observeActivation()
         showWelcomeWindowIfNeeded()
+    }
+
+    /// Re-registers the hotkey whenever the app comes back to the foreground.
+    ///
+    /// macOS posts no notification when an Accessibility grant changes, so an app
+    /// that failed to register a modifier-only shortcut would stay broken until the
+    /// user found the 再試行 button. Returning from System Settings is the moment
+    /// worth re-checking.
+    private func observeActivation() {
+        activationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.hotkeyError != nil else { return }
+                self.reapplyHotkey()
+            }
+        }
     }
 
     // MARK: - Commands used by the UI
@@ -253,11 +274,24 @@ final class AppEnvironment {
             hotkeyError = nil
         } catch {
             registeredMode = nil
-            hotkeyError = """
-                ショートカット \(HotkeyFormatting.displayString(for: binding)) を登録できませんでした。\
-                他のアプリが使用中の可能性があります。別のキーを設定してください。
-                """
+            let label = HotkeyFormatting.displayString(for: binding)
+            let reason =
+                (error as? HotkeyError)?.errorDescription
+                ?? "ショートカットキーを登録できませんでした。"
+            let recovery = (error as? HotkeyError)?.recoverySuggestion
+            hotkeyError = ["ショートカット \(label): \(reason)", recovery]
+                .compactMap { $0 }
+                .joined(separator: " ")
         }
+    }
+
+    /// Re-runs registration for the current binding.
+    ///
+    /// A modifier-only shortcut fails until Accessibility is granted, and macOS
+    /// gives no callback when that happens — Settings calls this after the user
+    /// comes back from System Settings.
+    func reapplyHotkey() {
+        applyHotkey(force: true)
     }
 
     private func handleHotkeyPress() {

@@ -18,6 +18,7 @@ public struct LLMProviderRegistry: Sendable {
         LLMProviderRegistry(all: [
             OpenAIProvider(session: session),
             AnthropicProvider(session: session),
+            GeminiProvider(session: session),
         ])
     }
 }

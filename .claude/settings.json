@@ -47,6 +47,7 @@
       "WebFetch(domain:platform.openai.com)",
       "WebFetch(domain:developers.openai.com)",
       "WebFetch(domain:docs.anthropic.com)",
+      "WebFetch(domain:ai.google.dev)",
       "WebFetch(domain:swiftpackageindex.com)"
     ],
     "deny": [

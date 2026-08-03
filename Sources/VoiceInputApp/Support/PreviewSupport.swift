@@ -35,6 +35,7 @@ extension AppEnvironment {
         let providers = LLMProviderRegistry(all: [
             FakeLLMProvider(id: .openAI),
             FakeLLMProvider(id: .anthropic),
+            FakeLLMProvider(id: .gemini),
         ])
         let output = FakeOutputSink()
         let sound = SoundFeedback(isEnabled: false)

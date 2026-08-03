@@ -19,9 +19,32 @@ struct GeneralSettingsView: View {
                     Text("押している間だけ録音").tag(HotkeyMode.pushToTalk)
                 }
                 if let error = environment.hotkeyError {
-                    Label(error, systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
-                        .font(.callout)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label(error, systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                            .font(.callout)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if environment.settings.hotkey.isModifierOnly {
+                            HStack {
+                                Button("アクセシビリティを許可…") {
+                                    environment.permissions.promptForAccessibility()
+                                }
+                                Button("システム設定を開く") {
+                                    environment.permissions.openSettings(for: .accessibility)
+                                }
+                                Button("再試行") { environment.reapplyHotkey() }
+                            }
+                            .controlSize(.small)
+                        }
+                    }
+                } else if environment.settings.hotkey.isModifierOnly {
+                    Text(
+                        "修飾キーだけのショートカットです。他のキーと一緒に押したときは反応せず、"
+                            + "単独で押して離したときだけ動作します。"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 }
             }
 
@@ -79,6 +102,19 @@ struct GeneralSettingsView: View {
             }
         }
         .onAppear(perform: refreshAccessibilityHelp)
+        .task { await watchForAccessibilityGrant() }
+    }
+
+    /// Polls while this pane is visible, because there is no notification for a TCC
+    /// change and the Settings window may never lose focus while the user flips the
+    /// switch in System Settings. Only runs a cheap `AXIsProcessTrusted()` check,
+    /// and only while something is actually blocked.
+    private func watchForAccessibilityGrant() async {
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+            refreshAccessibilityHelp()
+        }
     }
 
     /// Turning auto-paste on is the moment to check Accessibility: the setting is
@@ -97,6 +133,11 @@ struct GeneralSettingsView: View {
         environment.permissions.refresh()
         showsAccessibilityHelp =
             environment.settings.autoPasteEnabled && !environment.output.canPaste
+        // Coming back from System Settings is the moment a modifier-only shortcut
+        // can finally register; macOS sends no notification when that happens.
+        if environment.hotkeyError != nil, environment.settings.hotkey.isModifierOnly {
+            environment.reapplyHotkey()
+        }
     }
 }
 

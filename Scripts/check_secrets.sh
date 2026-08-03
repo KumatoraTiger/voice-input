@@ -46,11 +46,13 @@ F_BEGIN="-----BEG""IN "
 F_BEARER="[Bb]ear""er "
 F_USERS="/Us""ers/"
 F_GH="g""h[pousr]_"
+F_AIZA="A""I""za"
 
 # "name|extended-regex", checked in order.
 RULES=(
     "anthropic-api-key|${F_SK}ant-[A-Za-z0-9_-]{16,}"
     "openai-api-key|${F_SK}(proj-|svcacct-)?[A-Za-z0-9_-]{24,}"
+    "google-api-key|${F_AIZA}[0-9A-Za-z_-]{35}"
     "aws-access-key-id|(${F_AKIA}|${F_ASIA})[0-9A-Z]{16}"
     "private-key-block|${F_BEGIN}[A-Z ]*PRIVATE KEY-----"
     "bearer-token|${F_BEARER}[A-Za-z0-9._~+/=-]{24,}"
