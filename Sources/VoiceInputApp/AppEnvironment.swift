@@ -71,6 +71,9 @@ final class AppEnvironment {
 
     /// Non-nil while the configured shortcut could not be claimed.
     var hotkeyError: String?
+    /// Per-style shortcut problems (duplicate combination, already taken by
+    /// another app), keyed by style id and shown next to that style in Settings.
+    var styleHotkeyIssues: [UUID: String] = [:]
     /// Non-nil when launch-at-login needs the user to do something.
     var loginItemNotice: String?
     /// The app that was frontmost when recording started, e.g. "Slack".
@@ -81,7 +84,6 @@ final class AppEnvironment {
 
     @ObservationIgnored private let sound: SoundFeedback
     @ObservationIgnored private let hotkeys = HotkeyMonitor()
-    @ObservationIgnored private var registeredMode: HotkeyMode?
     @ObservationIgnored private var hudStorage: HUDWindowController?
     @ObservationIgnored private var welcomeWindow: WelcomeWindowController?
     @ObservationIgnored private var isStarted = false
@@ -201,6 +203,12 @@ final class AppEnvironment {
         coordinator.toggle()
     }
 
+    /// Switches the style of the dictation in flight (from the HUD). One-off: the
+    /// default style in Settings and the menu is untouched.
+    func selectStyle(_ id: UUID) {
+        coordinator.selectStyle(id)
+    }
+
     func copyToPasteboard(_ text: String) {
         try? output.copy(text)
     }
@@ -224,6 +232,10 @@ final class AppEnvironment {
             let settings = coordinator.settings
             _ = settings.hotkey
             _ = settings.hotkeyMode
+            // Styles carry shortcuts of their own, so editing one can change what
+            // has to be registered. `applyHotkey` compares the resulting plan, so
+            // typing a prompt does not churn the registrations.
+            _ = settings.styles
             _ = settings.playSounds
             _ = settings.launchAtLogin
         } onChange: { [weak self] in
@@ -253,36 +265,47 @@ final class AppEnvironment {
     // MARK: - Hotkey
 
     private func applyHotkey(force: Bool = false) {
-        let binding = settings.hotkey
-        let mode = settings.hotkeyMode
-        let unchanged = hotkeys.currentBinding == binding && registeredMode == mode
-        guard force || !unchanged || hotkeyError != nil else { return }
+        let plan = HotkeyPlan.make(for: settings)
 
-        do {
-            try hotkeys.register(
-                binding,
-                mode: mode,
-                onPress: { [weak self] in
+        // Re-register only when the set of shortcuts actually changed: editing a
+        // style's name or prompt must not tear the registrations down on every
+        // keystroke. A lingering failure still retries, because the usual cause is
+        // an Accessibility grant that may have arrived since.
+        if force || hotkeys.assignments != plan.assignments || hotkeyError != nil {
+            hotkeys.register(
+                plan.assignments,
+                onPress: { [weak self] purpose in
                     // Carbon dispatches on the main thread; see `HotkeyMonitor`.
-                    MainActor.assumeIsolated { self?.handleHotkeyPress() }
+                    MainActor.assumeIsolated { self?.handleHotkeyPress(purpose) }
                 },
-                onRelease: { [weak self] in
-                    MainActor.assumeIsolated { self?.handleHotkeyRelease() }
+                onRelease: { [weak self] purpose in
+                    MainActor.assumeIsolated { self?.handleHotkeyRelease(purpose) }
                 }
             )
-            registeredMode = mode
-            hotkeyError = nil
-        } catch {
-            registeredMode = nil
-            let label = HotkeyFormatting.displayString(for: binding)
-            let reason =
-                (error as? HotkeyError)?.errorDescription
-                ?? "ショートカットキーを登録できませんでした。"
-            let recovery = (error as? HotkeyError)?.recoverySuggestion
-            hotkeyError = ["ショートカット \(label): \(reason)", recovery]
-                .compactMap { $0 }
-                .joined(separator: " ")
+            hotkeyError = hotkeys.failures[.dictation].map {
+                message(for: $0, binding: settings.hotkey)
+            }
         }
+
+        // A style shortcut rejected before registration (a duplicate) and one Carbon
+        // refused (already owned by another app) are the same problem to the user:
+        // it is configured, and it will not fire. Recomputed even when nothing was
+        // re-registered, because adding a duplicate changes only the rejections.
+        var issues = plan.rejections.mapValues(\.message)
+        for (purpose, error) in hotkeys.failures {
+            guard let styleID = purpose.styleID else { continue }
+            issues[styleID] =
+                error.errorDescription ?? "ショートカットキーを登録できませんでした。"
+        }
+        styleHotkeyIssues = issues
+    }
+
+    private func message(for error: HotkeyError, binding: HotkeyBinding) -> String {
+        let label = HotkeyFormatting.displayString(for: binding)
+        let reason = error.errorDescription ?? "ショートカットキーを登録できませんでした。"
+        return ["ショートカット \(label): \(reason)", error.recoverySuggestion]
+            .compactMap { $0 }
+            .joined(separator: " ")
     }
 
     /// Re-runs registration for the current binding.
@@ -294,15 +317,24 @@ final class AppEnvironment {
         applyHotkey(force: true)
     }
 
-    private func handleHotkeyPress() {
+    /// A style shortcut means "dictate with this style, just this once". Pressed
+    /// while a dictation is already running it switches that dictation's style
+    /// instead of starting or stopping one — see `DictationCoordinator.toggle`.
+    private func handleHotkeyPress(_ purpose: HotkeyPurpose) {
         rememberFrontmostApp()
         switch settings.hotkeyMode {
-        case .toggle: coordinator.toggle()
-        case .pushToTalk: coordinator.start()
+        case .toggle:
+            coordinator.toggle(styleID: purpose.styleID)
+        case .pushToTalk:
+            if coordinator.isCapturing, let styleID = purpose.styleID {
+                coordinator.selectStyle(styleID)
+            } else {
+                coordinator.start(styleID: purpose.styleID)
+            }
         }
     }
 
-    private func handleHotkeyRelease() {
+    private func handleHotkeyRelease(_ purpose: HotkeyPurpose) {
         guard settings.hotkeyMode == .pushToTalk else { return }
         coordinator.stopAndProcess()
     }

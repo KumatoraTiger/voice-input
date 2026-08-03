@@ -127,6 +127,42 @@ on **release**, and only if no other key and no extra modifier joined the hold �
 otherwise ⇧⌃ would fire every time the user pressed ⌃⇧→. `.pushToTalk` brackets the
 hold directly and needs no such guard.
 
+### More than one shortcut: `HotkeyPurpose` and `HotkeyPlan`
+
+Every formatting style may carry a shortcut of its own, so `HotkeyMonitor` holds a
+set of registrations rather than one. Each is tagged with a `HotkeyPurpose`
+(`.dictation` or `.style(UUID)`), the Carbon event carries its `EventHotKeyID`, and
+the press is routed back to the purpose that owns it.
+
+`HotkeyPlan.make(for:)` (Core, unit-tested) turns `AppSettings` into that set and is
+where the rules live:
+
+- the main dictation shortcut always wins; styles are considered in Settings order
+  and the first claim on a combination keeps it,
+- a duplicate is **rejected with a reason** rather than handed to Carbon, which
+  would fail opaquely,
+- a modifier-only binding is allowed only for `.dictation` — it is the one shape
+  that costs a permission and a permanent event monitor, so it is not multiplied
+  across styles.
+
+A registration that still fails (another app owns the combination) takes down only
+itself: the remaining shortcuts stay live, and the reason is surfaced next to that
+style in Settings. Losing your dictation shortcut because one style clashed would be
+a bad trade.
+
+### A style is chosen per dictation, not per session
+
+`DictationCoordinator.styleOverrideID` holds a formatting style for the dictation in
+flight — set by a style shortcut, or in the HUD while recording. It is deliberately
+**not** persisted: it travels to the action as a copy of the settings
+(`AppSettings.selectingStyle(_:)`), and the default in Settings/the menu only ever
+changes where the user explicitly changes it. `start` resets it, `cancel` and the end
+of a run clear it.
+
+Pressing a *different* style's shortcut while recording switches the dictation
+instead of ending it (`toggle(action:styleID:)`); the style already in effect, or the
+plain shortcut, stops as usual.
+
 ## Threading and actor rules
 
 - **`DictationCoordinator` is `@MainActor`.** All state mutation and all SwiftUI

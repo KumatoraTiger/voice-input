@@ -17,6 +17,14 @@ public final class DictationCoordinator {
     public private(set) var inputLevel: Float = 0
     public private(set) var history: [DictationRecord] = []
 
+    /// A formatting style chosen for the dictation in flight — by a style
+    /// shortcut, or in the HUD while recording.
+    ///
+    /// Deliberately **not** persisted: picking a style here is a one-off, and the
+    /// default in Settings/the menu is only ever changed explicitly there.
+    /// Cleared at the start of every dictation.
+    public private(set) var styleOverrideID: UUID?
+
     /// Assigning persists through the injected `SettingsStore`.
     public var settings: AppSettings {
         get { storedSettings }
@@ -94,20 +102,30 @@ public final class DictationCoordinator {
 
     // MARK: - Commands
 
-    public func toggle(action: VoiceActionID = .format) {
-        if isRecordingOrPreparing {
-            stopAndProcess()
+    /// `styleID` names a formatting style for this dictation only.
+    ///
+    /// While recording, a *different* style switches the dictation in flight
+    /// instead of ending it — pressing a style shortcut mid-sentence is a
+    /// correction, not a stop. The same style, or the plain shortcut, stops.
+    public func toggle(action: VoiceActionID = .format, styleID: UUID? = nil) {
+        if isCapturing {
+            if let styleID, styleID != effectiveStyleID {
+                selectStyle(styleID)
+            } else {
+                stopAndProcess()
+            }
         } else if !state.isBusy {
-            start(action: action)
+            start(action: action, styleID: styleID)
         }
     }
 
-    public func start(action: VoiceActionID = .format) {
+    public func start(action: VoiceActionID = .format, styleID: UUID? = nil) {
         // Guard against double-start: a second hotkey press while transcribing
         // must not open a second session.
         guard !state.isBusy, startTask == nil, processTask == nil else { return }
 
         currentAction = action
+        styleOverrideID = settings.style(withID: styleID)?.id
         partialText = ""
         inputLevel = 0
         state = .preparing
@@ -120,13 +138,28 @@ public final class DictationCoordinator {
 
     public func stopAndProcess() {
         // Guard against out-of-order stop.
-        guard isRecordingOrPreparing, processTask == nil else { return }
+        guard isCapturing, processTask == nil else { return }
 
         processTask = Task { [weak self] in
             await self?.finishAndRun()
             self?.processTask = nil
         }
     }
+
+    /// Switches the style used by the dictation in flight. Ignored once the
+    /// transcript has been handed to the action — by then the choice is spent.
+    public func selectStyle(_ id: UUID) {
+        guard isCapturing, let style = settings.style(withID: id) else { return }
+        styleOverrideID = style.id
+    }
+
+    /// The style this dictation will be formatted with: the one-off override when
+    /// there is one, otherwise the default from Settings.
+    public var effectiveStyle: FormattingStyle? {
+        settings.style(withID: styleOverrideID) ?? settings.activeStyle
+    }
+
+    public var effectiveStyleID: UUID? { effectiveStyle?.id }
 
     public func cancel() {
         startTask?.cancel()
@@ -146,6 +179,7 @@ public final class DictationCoordinator {
 
         partialText = ""
         inputLevel = 0
+        styleOverrideID = nil
         state = .idle
         notify(.cancelled)
     }
@@ -263,6 +297,7 @@ public final class DictationCoordinator {
 
             record(transcript: transcript, outcome: outcome)
             partialText = ""
+            styleOverrideID = nil
             state = .finished(outcome)
             notify(.finished)
 
@@ -277,7 +312,9 @@ public final class DictationCoordinator {
 
     // MARK: - Helpers
 
-    private var isRecordingOrPreparing: Bool {
+    /// Recording, or opening the engine in order to record. The hotkey and the HUD
+    /// use it to decide between starting, switching style, and stopping.
+    public var isCapturing: Bool {
         state == .preparing || state == .recording
     }
 
@@ -297,6 +334,9 @@ public final class DictationCoordinator {
     }
 
     private func makeContext(for action: any VoiceAction) -> ActionContext {
+        // The override travels as a *copy* of the settings, never through the
+        // store: a style picked for one dictation must not become the default.
+        let settings = settings.selectingStyle(styleOverrideID)
         guard action.requiresLLM else {
             return ActionContext(settings: settings, frontmostAppName: capturedFrontmostAppName)
         }
@@ -354,6 +394,7 @@ public final class DictationCoordinator {
             Task { await session.cancel() }
         }
         inputLevel = 0
+        styleOverrideID = nil
 
         if wrapped == .cancelled {
             state = .idle

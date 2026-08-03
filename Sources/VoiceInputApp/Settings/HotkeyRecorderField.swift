@@ -15,7 +15,13 @@ import VoiceInputPlatform
 /// the user like the field is broken. Modifier-only combinations commit on
 /// release, so that ⇧ → ⇧⌃ records ⇧⌃ rather than ⇧ alone.
 struct HotkeyRecorderField: View {
-    @Binding var binding: HotkeyBinding
+    @Binding private var binding: HotkeyBinding?
+    /// Off for a style shortcut: a modifier-only combination needs an event
+    /// monitor and the Accessibility permission, which stays reserved for the one
+    /// main dictation shortcut. See `HotkeyPlan`.
+    private let allowsModifierOnly: Bool
+    /// Only an optional binding can be emptied again.
+    private let isClearable: Bool
 
     @State private var isRecording = false
     @State private var monitor: Any?
@@ -24,19 +30,46 @@ struct HotkeyRecorderField: View {
     /// full combination rather than whatever is left on the way up.
     @State private var pendingModifiers: HotkeyBinding?
 
+    /// A shortcut that must always be set — the main dictation one.
+    init(binding: Binding<HotkeyBinding>, allowsModifierOnly: Bool = true) {
+        self._binding = Binding(
+            get: { binding.wrappedValue },
+            set: { if let new = $0 { binding.wrappedValue = new } }
+        )
+        self.allowsModifierOnly = allowsModifierOnly
+        self.isClearable = false
+    }
+
+    /// An optional shortcut, e.g. the one on a formatting style.
+    init(binding: Binding<HotkeyBinding?>, allowsModifierOnly: Bool = false) {
+        self._binding = binding
+        self.allowsModifierOnly = allowsModifierOnly
+        self.isClearable = true
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Button {
-                if isRecording { stop() } else { start() }
-            } label: {
-                Text(label)
-                    .frame(minWidth: 130)
-                    .monospacedDigit()
+            HStack(spacing: 6) {
+                Button {
+                    if isRecording { stop() } else { start() }
+                } label: {
+                    Text(label)
+                        .frame(minWidth: 130)
+                        .monospacedDigit()
+                }
+                .buttonStyle(.bordered)
+                .accessibilityLabel("ショートカットキー")
+                .accessibilityValue(accessibilityValue)
+                .accessibilityHint("クリックしてから新しいキーの組み合わせを押します")
+
+                if isClearable, binding != nil, !isRecording {
+                    Button("クリア") {
+                        binding = nil
+                    }
+                    .controlSize(.small)
+                    .accessibilityLabel("ショートカットキーを解除")
+                }
             }
-            .buttonStyle(.bordered)
-            .accessibilityLabel("ショートカットキー")
-            .accessibilityValue(HotkeyFormatting.displayString(for: binding))
-            .accessibilityHint("クリックしてから新しいキーの組み合わせを押します")
 
             if let hint {
                 Text(hint)
@@ -49,18 +82,25 @@ struct HotkeyRecorderField: View {
     }
 
     private var label: String {
-        guard isRecording else { return HotkeyFormatting.displayString(for: binding) }
+        guard isRecording else { return binding.map(HotkeyFormatting.displayString(for:)) ?? "未設定" }
         if let pendingModifiers {
             return HotkeyFormatting.displayString(for: pendingModifiers)
         }
         return "キーを押してください…"
     }
 
+    private var accessibilityValue: String {
+        binding.map(HotkeyFormatting.displayString(for:)) ?? "未設定"
+    }
+
     private func start() {
         guard monitor == nil else { return }
         isRecording = true
         pendingModifiers = nil
-        hint = "キーを押すか、修飾キーだけ（例: ⇧⌃）を押して離してください。⎋ でキャンセル。"
+        hint =
+            allowsModifierOnly
+            ? "キーを押すか、修飾キーだけ（例: ⇧⌃）を押して離してください。⎋ でキャンセル。"
+            : "修飾キーと通常のキーを組み合わせて押してください（例: ⌃⇧1）。⎋ でキャンセル。"
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { event in
             if event.type == .flagsChanged {
                 handleFlagsChanged(event)
@@ -85,6 +125,8 @@ struct HotkeyRecorderField: View {
     /// Modifiers are recorded on the way *up*: while any are still held the field
     /// only previews the combination, and the release commits it.
     private func handleFlagsChanged(_ event: NSEvent) {
+        guard allowsModifierOnly else { return }
+
         if let candidate = HotkeyFormatting.modifierOnlyBinding(from: event) {
             pendingModifiers = candidate
             hint =
@@ -121,8 +163,13 @@ struct HotkeyRecorderField: View {
 struct HotkeyRecorderField_Previews: PreviewProvider {
     struct Host: View {
         @State private var binding = HotkeyBinding.defaultToggle
+        @State private var styleBinding: HotkeyBinding?
         var body: some View {
-            HotkeyRecorderField(binding: $binding).padding()
+            VStack(alignment: .leading, spacing: 12) {
+                HotkeyRecorderField(binding: $binding)
+                HotkeyRecorderField(binding: $styleBinding)
+            }
+            .padding()
         }
     }
 

@@ -86,6 +86,15 @@ enum HUDPhase: Equatable {
         return false
     }
 
+    /// Switching style only means something while audio is still being captured —
+    /// once the transcript is on its way to the LLM the choice is already spent.
+    var showsStylePicker: Bool {
+        switch self {
+        case .preparing, .recording: return true
+        default: return false
+        }
+    }
+
     var isCancellable: Bool {
         switch self {
         case .preparing, .recording, .transcribing, .formatting: return true

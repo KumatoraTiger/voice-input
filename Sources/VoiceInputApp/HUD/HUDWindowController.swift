@@ -97,7 +97,7 @@ final class HUDWindowController {
         panel.becomesKeyOnlyIfNeeded = true
         panel.animationBehavior = .none
 
-        let hosting = NSHostingView(rootView: makeRootView())
+        let hosting = FirstMouseHostingView(rootView: makeRootView())
         hosting.translatesAutoresizingMaskIntoConstraints = true
         hosting.autoresizingMask = [.width, .height]
         panel.contentView = hosting
@@ -187,6 +187,23 @@ private final class NonActivatingPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
+/// Hosting view that lets a click land on the control it hit.
+///
+/// The panel is deliberately never key, and by default AppKit swallows the first
+/// click into an inactive window. Without this, picking a style in the HUD would
+/// take two clicks — and the first would look like it did nothing.
+private final class FirstMouseHostingView<Content: View>: NSHostingView<Content> {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    @MainActor required init(rootView: Content) {
+        super.init(rootView: rootView)
+    }
+
+    @MainActor required dynamic init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+}
+
 /// The live wrapper around `RecordingHUD`: reads the observable coordinator and
 /// hands plain values down.
 private struct HUDHostView: View {
@@ -202,6 +219,9 @@ private struct HUDHostView: View {
                 partialText: coordinator.partialText,
                 level: coordinator.inputLevel,
                 frontmostAppName: environment.frontmostAppName,
+                styles: styleOptions,
+                selectedStyleID: coordinator.effectiveStyleID,
+                onSelectStyle: { environment.selectStyle($0) },
                 showsEscapeHint: AXIsProcessTrusted() || NSApp.isActive,
                 onCancel: onCancel,
                 onDismiss: onDismiss,
@@ -215,5 +235,11 @@ private struct HUDHostView: View {
             )
             .transition(.opacity)
         }
+    }
+
+    /// Nothing to choose between when the LLM is not going to run.
+    private var styleOptions: [HUDStyleOption] {
+        guard environment.settings.formattingEnabled else { return [] }
+        return environment.settings.styles.map(HUDStyleOption.init(style:))
     }
 }

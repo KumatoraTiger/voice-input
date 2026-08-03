@@ -2,6 +2,20 @@ import SwiftUI
 import VoiceInputCore
 import VoiceInputPlatform
 
+/// One formatting style as the HUD renders it: a name, and the shortcut that
+/// picks it, if it has one.
+struct HUDStyleOption: Identifiable, Equatable {
+    let id: UUID
+    let name: String
+    let shortcut: String?
+
+    init(style: FormattingStyle) {
+        self.id = style.id
+        self.name = style.name
+        self.shortcut = style.hotkey.map { HotkeyFormatting.displayString(for: $0) }
+    }
+}
+
 /// The floating overlay shown while a dictation is in flight.
 ///
 /// Deliberately dumb: everything it renders arrives as plain values, so it can be
@@ -11,6 +25,11 @@ struct RecordingHUD: View {
     var partialText: String = ""
     var level: Float = 0
     var frontmostAppName: String?
+    /// Styles to offer while recording. Empty hides the row entirely — which is
+    /// what happens when formatting is off, or there is only one style.
+    var styles: [HUDStyleOption] = []
+    var selectedStyleID: UUID?
+    var onSelectStyle: (UUID) -> Void = { _ in }
     /// Esc only reaches us when the app is active, or when Accessibility is
     /// granted; the hint is hidden otherwise rather than lying to the user.
     var showsEscapeHint: Bool = false
@@ -29,6 +48,9 @@ struct RecordingHUD: View {
                     .accessibilityValue("\(Int(level * 100))%")
             }
             transcriptView
+            if phase.showsStylePicker, styles.count > 1 {
+                stylePicker
+            }
             if case .failed(let error) = phase {
                 failureView(error)
             }
@@ -83,6 +105,64 @@ struct RecordingHUD: View {
                 .font(.callout)
                 .foregroundStyle(.tertiary)
         }
+    }
+
+    /// The style row. Clicking a chip switches the dictation in flight; the panel
+    /// never becomes key, so this does not move focus away from the app being
+    /// dictated into. A style with its own shortcut shows it, because pressing that
+    /// is the version of this that needs no mouse.
+    private var stylePicker: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text("整形スタイル（今回のみ）")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 84), spacing: 6, alignment: .leading)],
+                alignment: .leading,
+                spacing: 6
+            ) {
+                ForEach(styles) { style in
+                    styleChip(style, isSelected: style.id == selectedStyleID)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("整形スタイル")
+    }
+
+    private func styleChip(_ style: HUDStyleOption, isSelected: Bool) -> some View {
+        Button {
+            onSelectStyle(style.id)
+        } label: {
+            HStack(spacing: 4) {
+                Text(style.name)
+                    .font(.caption)
+                    .lineLimit(1)
+                if let shortcut = style.shortcut {
+                    Text(shortcut)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                isSelected ? Color.accentColor.opacity(0.22) : Color.secondary.opacity(0.12),
+                in: Capsule()
+            )
+            .overlay(
+                Capsule().strokeBorder(
+                    isSelected ? Color.accentColor : Color.clear,
+                    lineWidth: 1
+                )
+            )
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(style.name)
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
 
     private func failureView(_ error: VoiceInputError) -> some View {
@@ -187,6 +267,8 @@ struct RecordingHUD_Previews: PreviewProvider {
                 partialText: "明日の打ち合わせなんですけど、十時からに変更したいと思っています",
                 level: 0.55,
                 frontmostAppName: "Slack",
+                styles: FormattingStyle.builtIns.map(HUDStyleOption.init(style:)),
+                selectedStyleID: FormattingStyle.messageID,
                 showsEscapeHint: true
             )
             RecordingHUD(phase: .formatting, partialText: "整形前のテキスト", level: 0)

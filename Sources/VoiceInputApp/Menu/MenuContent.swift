@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import VoiceInputCore
+import VoiceInputPlatform
 
 /// The menu-bar menu. Rendered by AppKit (`.menu` style), so it sticks to the
 /// view types the menu backend supports: Text, Button, Toggle, Picker, Menu,
@@ -33,7 +34,7 @@ struct MenuContent: View {
 
         Picker("整形スタイル", selection: $environment.settings.activeStyleID) {
             ForEach(environment.settings.styles) { style in
-                Text(style.name).tag(Optional(style.id))
+                Text(styleTitle(for: style)).tag(Optional(style.id))
             }
         }
         .disabled(!environment.settings.formattingEnabled)
@@ -100,6 +101,13 @@ struct MenuContent: View {
         case .transcribing, .formatting: return true
         default: return false
         }
+    }
+
+    /// The shortcut rides along in the label: a `Picker` row cannot carry a real
+    /// key equivalent, and the point is only to remind the user it exists.
+    private func styleTitle(for style: FormattingStyle) -> String {
+        guard let hotkey = style.hotkey else { return style.name }
+        return "\(style.name)  \(HotkeyFormatting.displayString(for: hotkey))"
     }
 
     private func historyTitle(for record: DictationRecord) -> String {

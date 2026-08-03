@@ -1,5 +1,6 @@
 import SwiftUI
 import VoiceInputCore
+import VoiceInputPlatform
 
 struct FormattingSettingsView: View {
     @Environment(AppEnvironment.self) private var environment
@@ -56,6 +57,12 @@ struct FormattingSettingsView: View {
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
                             }
+                            Spacer()
+                            if let hotkey = style.hotkey {
+                                Text(HotkeyFormatting.displayString(for: hotkey))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                         .tag(style.id)
                     }
@@ -77,6 +84,26 @@ struct FormattingSettingsView: View {
                 if let index = selectedIndex {
                     TextField("名前", text: $environment.settings.styles[index].name)
                         .textFieldStyle(.roundedBorder)
+
+                    LabeledContent("ショートカット") {
+                        HotkeyRecorderField(
+                            binding: $environment.settings.styles[index].hotkey
+                        )
+                    }
+                    if let issue = styleIssue(at: index) {
+                        Label(issue, systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Text(
+                        "このスタイルで録音を開始します。既定のスタイルは変わらず、その回だけ適用されます。"
+                            + "録音中に押すと、録音を止めずにこのスタイルへ切り替えます。"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
                     VStack(alignment: .leading, spacing: 4) {
                         Text("指示")
                             .font(.caption)
@@ -172,6 +199,10 @@ struct FormattingSettingsView: View {
 
     private var selectedStyle: FormattingStyle? {
         selectedIndex.map { environment.settings.styles[$0] }
+    }
+
+    private func styleIssue(at index: Int) -> String? {
+        environment.styleHotkeyIssues[environment.settings.styles[index].id]
     }
 
     private var canRestoreSelected: Bool {

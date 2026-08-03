@@ -34,6 +34,15 @@ struct SettingsStoreTests {
         settings.hotkey = HotkeyBinding(keyCode: 12, modifiers: 34)
         settings.hotkeyMode = .pushToTalk
         settings.launchAtLogin = true
+        settings.styles = [
+            FormattingStyle(
+                name: "チャット",
+                instructions: "短く",
+                hotkey: HotkeyBinding(keyCode: 18, modifiers: 4096)
+            ),
+            FormattingStyle(name: "ショートカットなし", instructions: ""),
+        ]
+        settings.activeStyleID = settings.styles.first?.id
 
         try store.save(settings)
         #expect(store.load() == settings)
@@ -66,6 +75,36 @@ struct SettingsStoreTests {
         // …and saving over it recovers.
         try store.save(AppSettings(localeIdentifier: "en-GB"))
         #expect(store.load().localeIdentifier == "en-GB")
+    }
+
+    /// Styles gained `hotkey` after the first release, so settings written before
+    /// it existed have to keep loading — otherwise an update silently resets every
+    /// preference the user has.
+    @Test("settings saved before styles had shortcuts still load")
+    func stylesWithoutHotkeyStillDecode() throws {
+        let (defaults, suite) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        var settings = AppSettings()
+        settings.localeIdentifier = "en-US"
+        let encoded = try JSONEncoder().encode(settings)
+        var object = try #require(
+            try JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        let styles = try #require(object["styles"] as? [[String: Any]])
+        object["styles"] = styles.map { style in
+            style.filter { $0.key != "hotkey" }
+        }
+        defaults.set(
+            try JSONSerialization.data(withJSONObject: object),
+            forKey: UserDefaultsSettingsStore.defaultKey
+        )
+
+        let loaded = UserDefaultsSettingsStore(defaults: defaults).load()
+
+        #expect(loaded.localeIdentifier == "en-US")
+        #expect(loaded.styles.count == FormattingStyle.builtIns.count)
+        #expect(loaded.styles.allSatisfy { $0.hotkey == nil })
     }
 
     @Test("missing key yields defaults")

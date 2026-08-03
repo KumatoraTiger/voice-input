@@ -127,6 +127,12 @@ The default hotkey shape (a key plus modifiers, ⌥Space) goes through Carbon's
 `RegisterEventHotKey`, which observes **nothing** — the OS delivers a callback only
 for that one combination. No permission, no event stream.
 
+A formatting style can be given a shortcut of its own, and each one is another
+Carbon registration of exactly this kind: one more combination the OS will call back
+about, still no event stream and still no permission. Style shortcuts are
+key-plus-modifier only — the modifier-only path below stays reserved for the single
+main shortcut, so adding styles can never add a keyboard monitor.
+
 A modifier-only hotkey (⇧⌃) cannot be expressed in Carbon, so it is detected from
 `NSEvent` monitors. What that means concretely:
 

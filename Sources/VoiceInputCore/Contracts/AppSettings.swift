@@ -9,12 +9,26 @@ public struct FormattingStyle: Identifiable, Codable, Sendable, Equatable, Hasha
     public var instructions: String
     /// Built-ins can be edited but not deleted, and are restorable.
     public var isBuiltIn: Bool
+    /// Optional global shortcut that dictates with this style without changing the
+    /// default one. Key + modifiers only: a modifier-only binding is reserved for
+    /// the main dictation shortcut (see `HotkeyPlan`).
+    ///
+    /// Decoded with `decodeIfPresent`, so settings written before this field
+    /// existed still load.
+    public var hotkey: HotkeyBinding?
 
-    public init(id: UUID = UUID(), name: String, instructions: String, isBuiltIn: Bool = false) {
+    public init(
+        id: UUID = UUID(),
+        name: String,
+        instructions: String,
+        isBuiltIn: Bool = false,
+        hotkey: HotkeyBinding? = nil
+    ) {
         self.id = id
         self.name = name
         self.instructions = instructions
         self.isBuiltIn = isBuiltIn
+        self.hotkey = hotkey
     }
 }
 
@@ -132,6 +146,22 @@ public struct AppSettings: Codable, Sendable, Equatable {
     public var activeStyle: FormattingStyle? {
         guard let activeStyleID else { return styles.first }
         return styles.first { $0.id == activeStyleID } ?? styles.first
+    }
+
+    public func style(withID id: UUID?) -> FormattingStyle? {
+        guard let id else { return nil }
+        return styles.first { $0.id == id }
+    }
+
+    /// A copy pointed at another style, used for a **one-off** switch: the
+    /// coordinator hands this to the action so a style chosen in the HUD or by a
+    /// style shortcut applies to that dictation alone, without persisting.
+    /// An id that names no style leaves the settings untouched.
+    public func selectingStyle(_ id: UUID?) -> AppSettings {
+        guard let id, style(withID: id) != nil else { return self }
+        var copy = self
+        copy.activeStyleID = id
+        return copy
     }
 }
 

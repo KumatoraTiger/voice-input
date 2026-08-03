@@ -258,11 +258,32 @@ struct DictationCoordinatorTests {
         let displayName = "spy"
         let requiresLLM = false
         var seenFrontmostAppName: String?
+        var seenStyleName: String?
 
         func run(transcript: Transcript, context: ActionContext) async throws -> ActionOutcome {
             seenFrontmostAppName = context.frontmostAppName
+            seenStyleName = context.settings.activeStyle?.name
             return ActionOutcome(text: transcript.text)
         }
+    }
+
+    /// A coordinator whose action records the context it was handed.
+    private func makeSpyHarness(
+        settings: AppSettings = AppSettings()
+    ) -> (coordinator: DictationCoordinator, spy: ContextSpyAction, store: InMemorySettingsStore) {
+        let spy = ContextSpyAction()
+        let store = InMemorySettingsStore(settings)
+        let coordinator = DictationCoordinator(
+            audio: FakeAudioCapture(),
+            engines: StaticEngineResolver(engines: [FakeTranscriptionEngine(transcript: "テスト")]),
+            providers: LLMProviderRegistry(all: []),
+            actions: ActionRegistry(actions: [spy]),
+            settingsStore: store,
+            secrets: InMemorySecretStore([:]),
+            output: FakeOutputSink()
+        )
+        coordinator.finishedStateDuration = .zero
+        return (coordinator, spy, store)
     }
 
     @Test("the frontmost app name reaches the action context")
@@ -286,6 +307,118 @@ struct DictationCoordinatorTests {
         await coordinator.waitUntilIdle()
 
         #expect(spy.seenFrontmostAppName == "Slack")
+    }
+
+    // MARK: Formatting style, chosen per dictation
+
+    @Test("starting with a style formats with it and leaves the default alone")
+    func styleOverrideAppliesOnce() async throws {
+        let harness = makeSpyHarness()
+        let coordinator = harness.coordinator
+
+        coordinator.start(styleID: FormattingStyle.messageID)
+        await coordinator.waitUntilIdle()
+        #expect(coordinator.effectiveStyleID == FormattingStyle.messageID)
+
+        coordinator.stopAndProcess()
+        await coordinator.waitUntilIdle()
+
+        #expect(harness.spy.seenStyleName == "チャット向け")
+        // The stored default never moved — that is the whole point of the override.
+        #expect(harness.store.load().activeStyleID == FormattingStyle.standardID)
+        #expect(coordinator.settings.activeStyleID == FormattingStyle.standardID)
+        // …and it does not leak into the next dictation.
+        #expect(coordinator.styleOverrideID == nil)
+        #expect(coordinator.effectiveStyleID == FormattingStyle.standardID)
+    }
+
+    @Test("selecting a style while recording switches the dictation in flight")
+    func selectStyleWhileRecording() async throws {
+        let harness = makeSpyHarness()
+        let coordinator = harness.coordinator
+
+        coordinator.start()
+        await coordinator.waitUntilIdle()
+        #expect(coordinator.effectiveStyleID == FormattingStyle.standardID)
+
+        coordinator.selectStyle(FormattingStyle.verbatimID)
+        #expect(coordinator.effectiveStyleID == FormattingStyle.verbatimID)
+
+        coordinator.stopAndProcess()
+        await coordinator.waitUntilIdle()
+        #expect(harness.spy.seenStyleName == "最小限")
+    }
+
+    @Test("a style shortcut pressed mid-recording switches instead of stopping")
+    func toggleWithAnotherStyleSwitches() async throws {
+        let harness = makeSpyHarness()
+        let coordinator = harness.coordinator
+
+        coordinator.toggle(styleID: FormattingStyle.messageID)
+        await coordinator.waitUntilIdle()
+        #expect(coordinator.state == .recording)
+
+        coordinator.toggle(styleID: FormattingStyle.verbatimID)
+        await coordinator.waitUntilIdle()
+        #expect(coordinator.state == .recording)
+        #expect(coordinator.effectiveStyleID == FormattingStyle.verbatimID)
+
+        // The style now in effect stops, like the plain shortcut does.
+        coordinator.toggle(styleID: FormattingStyle.verbatimID)
+        await coordinator.waitUntilIdle()
+        #expect(coordinator.state == .idle)
+        #expect(harness.spy.seenStyleName == "最小限")
+    }
+
+    @Test("the plain shortcut stops a dictation started from a style shortcut")
+    func plainToggleStopsStyleDictation() async throws {
+        let harness = makeSpyHarness()
+        let coordinator = harness.coordinator
+
+        coordinator.toggle(styleID: FormattingStyle.messageID)
+        await coordinator.waitUntilIdle()
+        coordinator.toggle()
+        await coordinator.waitUntilIdle()
+
+        #expect(coordinator.state == .idle)
+        #expect(harness.spy.seenStyleName == "チャット向け")
+    }
+
+    @Test("an unknown style id falls back to the default rather than failing")
+    func unknownStyleIDIsIgnored() async throws {
+        let harness = makeSpyHarness()
+        let coordinator = harness.coordinator
+
+        coordinator.start(styleID: UUID())
+        await coordinator.waitUntilIdle()
+        #expect(coordinator.styleOverrideID == nil)
+
+        coordinator.selectStyle(UUID())
+        #expect(coordinator.styleOverrideID == nil)
+
+        coordinator.stopAndProcess()
+        await coordinator.waitUntilIdle()
+        #expect(harness.spy.seenStyleName == "標準")
+    }
+
+    @Test("selecting a style outside a dictation is ignored")
+    func selectStyleWhileIdleIsIgnored() async throws {
+        let coordinator = makeSpyHarness().coordinator
+
+        coordinator.selectStyle(FormattingStyle.verbatimID)
+        #expect(coordinator.styleOverrideID == nil)
+    }
+
+    @Test("cancelling drops the style override")
+    func cancelClearsStyleOverride() async throws {
+        let coordinator = makeSpyHarness().coordinator
+
+        coordinator.start(styleID: FormattingStyle.messageID)
+        await coordinator.waitUntilIdle()
+        coordinator.cancel()
+
+        #expect(coordinator.styleOverrideID == nil)
+        #expect(coordinator.effectiveStyleID == FormattingStyle.standardID)
     }
 
     // MARK: Cancel
