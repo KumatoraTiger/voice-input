@@ -98,6 +98,14 @@ person at the keyboard, someone else in the room, and audio playing nearby. So:
 - Delimiter injection is defused: `FormattingPromptBuilder.neutralize(_:)` rewrites
   any literal fence tags in the transcript, so a speaker (or a mis-recognition)
   cannot close the fence early.
+- **Self-correction is scoped to the text, not to the formatter.** The system prompt
+  asks the model to honour a later correction of an earlier phrase (「3 時じゃなくて
+  4 時」) and to resolve a spelled-out kanji, which means transcript content does
+  steer the output. The boundary is restated at the end of the injection section:
+  speech aimed at the formatter itself — anything invoking 出力 / あなた / 指示 /
+  プロンプト / システム — is transcribed as body text rather than acted on. The
+  worst case a real self-correction can produce is *less* text, never a different
+  behaviour, because the output is still text only (next bullet).
 - The result of formatting is **text only**. An action's `ActionOutcome` can copy to
   the clipboard and — only with the user's explicit setting — paste. It cannot run a
   command, call a tool, open a URL, choose a model or pick a destination. A future
