@@ -15,6 +15,9 @@ public enum UtteranceBoundary {
     /// How much of the old transcript must survive as a prefix for the new one to
     /// count as a revision of it rather than a fresh start.
     private static let revisionPrefixRatio = 0.5
+    /// How much shorter the new transcript must be, without a rewound window, to
+    /// pass as a fresh start rather than a revision — see `restarted`.
+    private static let restartCollapseRatio = 0.5
     /// Timestamps are seconds; anything smaller is float noise, not a rewind.
     private static let timestampEpsilon: TimeInterval = 0.001
 
@@ -38,9 +41,17 @@ public enum UtteranceBoundary {
 
         if nextStart < previousStart - timestampEpsilon { return true }
 
-        // Same start time, shorter text: either a revision of the tail (which keeps
-        // the head intact) or a restart that happens to begin at the same offset.
-        // What separates them is how much of the old text still leads the new one.
+        // No rewind: either a revision of the running text or a restart that happens
+        // to begin at the same offset. Two things have to hold for the latter, and
+        // the length is the one that actually separates them in practice — the
+        // recognizer rewrites the head of a Japanese sentence often enough (kana to
+        // kanji, a particle dropped) that a diverging prefix on its own fired on 48
+        // of 111 observed boundaries, every one of them a revision. A real fresh
+        // start is a word or two, so it collapses the text; a revision keeps nearly
+        // all of it.
+        guard Double(next.count) < Double(previous.count) * restartCollapseRatio else {
+            return false
+        }
         let shared = commonPrefixCount(previous, next)
         return Double(shared) < Double(previous.count) * revisionPrefixRatio
     }

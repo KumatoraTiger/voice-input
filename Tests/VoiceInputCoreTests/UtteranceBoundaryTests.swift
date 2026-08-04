@@ -82,6 +82,34 @@ struct UtteranceBoundaryTests {
         )
     }
 
+    // The pair below is the shape that made this check fire wrongly in the field:
+    // the recognizer re-converted the head of the sentence (kana to kanji), so no
+    // prefix survived, while the text as a whole barely moved. Length is what tells
+    // it apart from a fresh start.
+    @Test("Barely shorter text at the same offset is a revision of the head")
+    func headRevisionAtSameOffsetIsNotARestart() {
+        #expect(
+            !UtteranceBoundary.restarted(
+                previous: "きょうの打ち合わせの件なんですけど",
+                next: "今日の打ち合わせの件なんですけ",
+                previousStart: 0.00,
+                nextStart: 0.00
+            )
+        )
+    }
+
+    @Test("Barely shorter text is a revision even when the window jumps forward")
+    func headRevisionWithForwardWindowIsNotARestart() {
+        #expect(
+            !UtteranceBoundary.restarted(
+                previous: "きょうの打ち合わせの件なんですけど",
+                next: "今日の打ち合わせの件なんですけ",
+                previousStart: 0.00,
+                nextStart: 18.21
+            )
+        )
+    }
+
     @Test("An empty previous transcript can never be a restart")
     func emptyPreviousIsNeverARestart() {
         #expect(!UtteranceBoundary.restarted(previous: "", next: "そ"))

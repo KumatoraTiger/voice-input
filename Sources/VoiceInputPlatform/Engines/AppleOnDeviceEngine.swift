@@ -307,6 +307,20 @@ private final class AppleOnDeviceSession: TranscriptionSession, @unchecked Senda
                     to=\(windowStart, format: .fixed(precision: 2), privacy: .public)
                     """
                 )
+            } else if text.count < previous.count {
+                // The mirror image of the line above. A shrink we read as a revision
+                // is the call most likely to be wrong — too eager and the dictation
+                // says everything twice, too strict and half of it disappears — so
+                // leave the numbers behind for whoever has to judge that next.
+                Self.log.debug(
+                    """
+                    shrink kept as revision: \
+                    fromChars=\(previous.count, privacy: .public) \
+                    toChars=\(text.count, privacy: .public) \
+                    from=\(previousStart, format: .fixed(precision: 2), privacy: .public) \
+                    to=\(windowStart, format: .fixed(precision: 2), privacy: .public)
+                    """
+                )
             }
             partialContinuation.yield(preview)
             return
