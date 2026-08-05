@@ -268,6 +268,32 @@ HUD の表示（「質問を録音中…」「回答を作成中…」）が、�
 
 設計の詳細と、なぜこの順序なのかは [docs/SECURITY.md](docs/SECURITY.md) に書いています。
 
+### 画面コンテキストが効かないとき
+
+どの段階で落ちているかはログに出ます。
+
+```bash
+log show --last 10m --style compact --predicate 'subsystem == "io.github.voiceinput" AND (category == "screen" OR category == "formatting")'
+```
+
+読み方は次の通りです。
+
+| 出力 | 意味 |
+|---|---|
+| `screen read skipped: …` | 画面を読む前に止まった。理由がそのまま出ます（権限なし、最前面が VoiceInput 自身、除外アプリ、条件に合うウィンドウなし） |
+| `screen read: lines=… pool=… capped=…` | 読めた。`lines` が OCR の行数、`pool` が単語候補の数。`capped=true` なら上限に当たっているので取りこぼしがありえます |
+| `screen context: pool=… candidates=…` | `candidates` が実際にプロンプトに入った語数。**`pool` が多いのに `candidates=0` なら、画面は読めていて、話した内容と音が近い語が無かった**ということです |
+| `screen context: none available` | 有効なのに画面から何も得られていない。ひとつ上の `screen read` の行に理由があります |
+| `screen context discarded: …` | 出力検査で弾かれ、画面なしで整形し直した |
+
+採用された**語そのもの**は画面の中身なので、既定では `<private>` に伏せられます。手元で
+確かめたいときだけ次で開けます（`log config` は sudo が必要です）。確認が済んだら
+`private_data:off` に戻してください。
+
+```bash
+sudo log config --subsystem io.github.voiceinput --mode "private_data:on,level:debug"
+```
+
 ## アドホック署名の注意
 
 `make app` は既定で **アドホック署名** します。アドホック署名には安定した識別子が

@@ -56,55 +56,89 @@ public struct ScreenCaptureContextProvider: ScreenContextProviding {
         self.recognitionLanguages = Self.languages(for: locale)
     }
 
+    /// Why a read produced nothing. Every one of these used to be an unlogged
+    /// `return .empty`, which made a feature that silently does nothing
+    /// indistinguishable from one that is working — see `SkipReason` in the log
+    /// output when a dictation gains no candidates.
+    enum SkipReason: String {
+        case noPermission = "no screen-recording permission"
+        case noFrontmostApp = "no frontmost application"
+        case ownWindow = "VoiceInput is itself frontmost"
+        case excludedApp = "excluded app"
+        case noEligibleWindow = "no window large enough on layer 0"
+    }
+
+    private enum WindowLookup {
+        case found(SCWindow)
+        case skipped(SkipReason)
+    }
+
     public func currentContext() async -> ScreenContext {
         guard CGPreflightScreenCaptureAccess() else {
-            Self.log.info("screen context skipped: no screen-recording permission")
+            Self.skip(.noPermission)
             return .empty
         }
 
         do {
-            guard let window = try await frontmostWindow() else { return .empty }
-            let image = try await capture(window)
-            let lines = try recognizeText(in: image)
-            let terms = extractor.terms(from: lines)
-            Self.log.debug(
-                """
-                screen context: \(lines.count, privacy: .public) lines, \
-                \(terms.count, privacy: .public) terms
-                """
-            )
-            return ScreenContext(terms: terms, fullText: lines.joined(separator: "\n"))
+            switch try await frontmostWindow() {
+            case .skipped(let reason):
+                Self.skip(reason)
+                return .empty
+            case .found(let window):
+                let image = try await capture(window)
+                let lines = try recognizeText(in: image)
+                let terms = extractor.terms(from: lines)
+                // Counts only. They are enough to tell a working read from a
+                // broken one, and none of them is user content.
+                Self.log.notice(
+                    """
+                    screen read: lines=\(lines.count, privacy: .public) \
+                    pool=\(terms.count, privacy: .public) \
+                    capped=\(terms.count >= extractor.limit, privacy: .public)
+                    """
+                )
+                // The words themselves are screen content, so they are redacted
+                // unless the user deliberately turns private data on. See
+                // README → 画面コンテキストが効かないとき.
+                Self.log.debug("screen pool: \(terms.joined(separator: " "), privacy: .private)")
+                return ScreenContext(terms: terms, fullText: lines.joined(separator: "\n"))
+            }
         } catch {
             // The error can name a window title, so only its type is logged.
-            Self.log.info("screen context unavailable: \(type(of: error), privacy: .public)")
+            Self.log.notice("screen read failed: \(type(of: error), privacy: .public)")
             return .empty
         }
     }
 
+    private static func skip(_ reason: SkipReason) {
+        log.notice("screen read skipped: \(reason.rawValue, privacy: .public)")
+    }
+
     // MARK: - Capture
 
-    private func frontmostWindow() async throws -> SCWindow? {
+    private func frontmostWindow() async throws -> WindowLookup {
         let frontmost = await MainActor.run { NSWorkspace.shared.frontmostApplication }
-        guard let frontmost else { return nil }
+        guard let frontmost else { return .skipped(.noFrontmostApp) }
 
         let bundleID = frontmost.bundleIdentifier
-        guard bundleID != Bundle.main.bundleIdentifier else { return nil }
+        guard bundleID != Bundle.main.bundleIdentifier else { return .skipped(.ownWindow) }
         if let bundleID, excludedBundleIDs.contains(bundleID) {
-            Self.log.info("screen context skipped: excluded app")
-            return nil
+            return .skipped(.excludedApp)
         }
 
         let content = try await SCShareableContent.excludingDesktopWindows(
             true,
             onScreenWindowsOnly: true
         )
-        return
+        let window =
             content.windows
             .filter { $0.owningApplication?.processID == frontmost.processIdentifier }
             // Layer 0 is a normal document window; panels and menus sit above it.
             .filter { $0.windowLayer == 0 }
             .filter { $0.frame.width >= 200 && $0.frame.height >= 200 }
             .max { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }
+        guard let window else { return .skipped(.noEligibleWindow) }
+        return .found(window)
     }
 
     private func capture(_ window: SCWindow) async throws -> CGImage {

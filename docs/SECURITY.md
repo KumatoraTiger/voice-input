@@ -93,6 +93,10 @@ crash reports long after the request.
   content is ever logged for debugging it must be marked `privacy: .private` and
   left off by default. `VoiceInputError.kind` exists for exactly this reason: it
   names the failure case without its associated strings, which can quote speech.
+  画面コンテキスト follows the same split: OCR line counts, pool sizes and the number
+  of candidates that survived matching are logged as metadata, while the words
+  themselves go out at `.debug` marked `privacy: .private` — redacted unless someone
+  deliberately enables private data with `log config` on their own machine.
 - The only things on disk are `AppSettings` in `UserDefaults` (no secrets) and the
   Keychain items.
 
@@ -189,6 +193,16 @@ word: no whitespace, at most 30 characters, no URL or path shape. An instruction
 needs a sentence to exist, and this filter makes sentences unrepresentable. The
 same filter drops the shapes secrets take — long letter-and-digit runs, all-digit
 strings — so an API key or a card number visible on screen is never a candidate.
+
+This stage deliberately does **not** limit how many words survive in any meaningful
+sense (the cap is 400, and it is there to bound memory and comparison cost). It runs
+when recording starts, before a transcript exists, so it has nothing to rank
+relevance against and falls back to frequency — which on a real window favours
+chrome over the one proper noun being dictated. Narrowing is layer 1's job, and what
+reaches the prompt is capped there, at 12. A wider pool does mean more words are
+*eligible* for layer 1, so an attacker gets more attempts at the phonetic gate; each
+attempt still has to survive it, and still needs the user to utter something close,
+so the bound in layer 1 is unchanged in kind.
 
 **3. One window, and not every window.** Only the frontmost window is captured, so
 a chat in the background or a second display is never read. Password managers and

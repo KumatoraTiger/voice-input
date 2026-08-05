@@ -13,13 +13,22 @@ import Foundation
 ///    the reason the rest of the pipeline can treat screen terms as comparatively
 ///    safe — see `ScreenContext` for the whole argument.
 public struct ScreenTermExtractor: Sendable {
-    /// How many terms survive. The prompt should stay short, and a long list
-    /// dilutes the ones that matter.
+    /// Upper bound on the pool, and **only** a bound on memory and comparison
+    /// cost — not a relevance filter.
+    ///
+    /// It cannot be one: extraction runs when recording starts, so there is no
+    /// transcript yet and nothing to judge relevance against. Ranking is by
+    /// frequency, which is close to the opposite of what matters — a real window
+    /// is mostly chrome, repeated, while the proper noun being dictated appears
+    /// once. A tight cap therefore drops exactly the words the feature exists
+    /// for, before `ScreenTermMatcher` — the one stage that knows what was said
+    /// — can see them. So the pool stays wide and the narrowing happens there;
+    /// what reaches the prompt is capped by the matcher, not here.
     public var limit: Int
     /// Longer than this and it is not a word anyone dictated.
     public var maximumLength: Int
 
-    public init(limit: Int = 40, maximumLength: Int = 30) {
+    public init(limit: Int = 400, maximumLength: Int = 30) {
         self.limit = limit
         self.maximumLength = maximumLength
     }

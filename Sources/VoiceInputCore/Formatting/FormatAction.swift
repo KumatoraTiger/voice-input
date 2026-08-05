@@ -51,6 +51,7 @@ public struct FormatAction: VoiceAction {
 
         let screen = screenContext(for: context)
         let terms = screen.map { matcher.candidates(transcript: raw, terms: $0.terms) } ?? []
+        Self.logScreenContext(screen, candidates: terms, settings: context.settings)
 
         let started = clock()
         var response = try await send(
@@ -108,6 +109,32 @@ public struct FormatAction: VoiceAction {
                 discardedScreenContext: discardedScreenContext
             )
         )
+    }
+
+    /// The one number that says whether the feature did anything: how much of the
+    /// screen's pool survived matching against what was actually said. `pool > 0`
+    /// with `candidates=0` is the honest failure mode — the screen was read and
+    /// nothing on it sounded like the dictation — and it is invisible without
+    /// this line.
+    private static func logScreenContext(
+        _ screen: ScreenContext?,
+        candidates: [String],
+        settings: AppSettings
+    ) {
+        guard let screen else {
+            if settings.screenContextEnabled {
+                log.notice("screen context: none available")
+            }
+            return
+        }
+        log.notice(
+            """
+            screen context: pool=\(screen.terms.count, privacy: .public) \
+            candidates=\(candidates.count, privacy: .public)
+            """
+        )
+        // Screen content: redacted unless private data is deliberately enabled.
+        log.debug("screen candidates: \(candidates.joined(separator: " "), privacy: .private)")
     }
 
     /// The screen is only consulted when the user asked for it. Reading the flag

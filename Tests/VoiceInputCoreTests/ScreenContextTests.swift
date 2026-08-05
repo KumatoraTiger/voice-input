@@ -77,6 +77,30 @@ struct ScreenTermExtractorTests {
 
         #expect(terms == ["Gamma", "Beta"])
     }
+
+    /// The regression that matters in practice. Extraction runs at *recording
+    /// start*, before a transcript exists, so it cannot rank by relevance — it
+    /// ranks by frequency. A real window is mostly chrome, repeated; the proper
+    /// noun being dictated usually appears once. If the cap is tight enough for
+    /// chrome to fill it, the one word the feature exists to fix is dropped
+    /// before `ScreenTermMatcher` — the only stage that knows what was said —
+    /// ever sees it.
+    @Test("a word seen once outlives a screen full of repeated chrome")
+    func rareTermSurvivesChrome() {
+        var lines = (0..<2).flatMap { _ in (0..<80).map { "Chrome\($0)" } }
+        lines.append("Kubernetes")
+
+        let terms = extractor.terms(from: lines)
+        #expect(terms.contains("Kubernetes"))
+
+        // And it still has to survive the narrowing that follows, which is where
+        // the term earns its place in the prompt.
+        let candidates = ScreenTermMatcher().candidates(
+            transcript: "クーバネティス のポッドが落ちています",
+            terms: terms
+        )
+        #expect(candidates.contains("Kubernetes"))
+    }
 }
 
 @Suite("Screen term matching")
