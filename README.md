@@ -284,7 +284,32 @@ log show --last 10m --style compact --predicate 'subsystem == "io.github.voicein
 | `screen read: lines=… pool=… capped=…` | 読めた。`lines` が OCR の行数、`pool` が単語候補の数。`capped=true` なら上限に当たっているので取りこぼしがありえます |
 | `screen context: pool=… candidates=…` | `candidates` が実際にプロンプトに入った語数。**`pool` が多いのに `candidates=0` なら、画面は読めていて、話した内容と音が近い語が無かった**ということです |
 | `screen context: none available` | 有効なのに画面から何も得られていない。ひとつ上の `screen read` の行に理由があります |
+| `screen context result: candidates=… applied=… discarded=…` | `applied` が、渡した候補のうち**実際に整形後の文章に現れて、かつ書き起こしには無かった**語数。つまり画面が出力を変えた語数 |
 | `screen context discarded: …` | 出力検査で弾かれ、画面なしで整形し直した |
+
+`applied` は「画面が効いた」の上限です。モデルは手がかりなしでも正しい綴りに到達しうるので、
+その分と本当の修正を、この数字では区別できません。
+
+### 効き具合をまとめて数える
+
+`screen context result` の行を集計すると、機能全体の当たり具合が出ます。
+
+```bash
+log show --last 1d --style compact --predicate 'subsystem == "io.github.voiceinput" AND process == "VoiceInput" AND category == "formatting"' \
+| grep -o 'screen context result: candidates=[0-9]* applied=[0-9]* discarded=[a-z]*' \
+| awk -F'[= ]' '{n++; c+=$5; a+=$7; if ($7>0) hit++; if ($9=="true") d++}
+  END { if (!n) { print "候補が入った整形はまだ 0 回"; exit }
+        printf "候補が入った整形: %d 回\n反映あり: %d 回 (%.0f%%)\n候補 %d 語中 %d 語が反映 (%.0f%%)\n検査で破棄: %d 回\n", n, hit, 100*hit/n, c, a, 100*a/c, d }'
+```
+
+出力はこの形です。
+
+```
+候補が入った整形: 24 回
+反映あり: 17 回 (71%)
+候補 39 語中 21 語が反映 (54%)
+検査で破棄: 1 回
+```
 
 採用された**語そのもの**は画面の中身なので、既定では `<private>` に伏せられます。手元で
 確かめたいときだけ次で開けます（`log config` は sudo が必要です）。確認が済んだら

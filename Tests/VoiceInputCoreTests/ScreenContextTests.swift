@@ -432,6 +432,39 @@ struct ScreenContextGuardTests {
         #expect(verdict.isContaminated)
     }
 
+    @Test("a term the model applied is counted as yield")
+    func appliedTermIsCounted() {
+        let applied = guardian.appliedTerms(
+            output: "ProjectAuroraの設計について話します。",
+            transcript: "ぷろじぇくとおーろらの設計について話します",
+            sanctionedTerms: ["ProjectAurora"]
+        )
+
+        #expect(applied == 1)
+    }
+
+    @Test("a spelling the recogniser already got right is not yield")
+    func termAlreadyInTranscriptIsNotCounted() {
+        let applied = guardian.appliedTerms(
+            output: "ProjectAuroraの設計について話します。",
+            transcript: "ProjectAuroraの設計について話します",
+            sanctionedTerms: ["ProjectAurora"]
+        )
+
+        #expect(applied == 0)
+    }
+
+    @Test("candidates the model ignored are not yield")
+    func unusedTermsAreNotCounted() {
+        let applied = guardian.appliedTerms(
+            output: "明日の打ち合わせは十時からです。",
+            transcript: "明日の打ち合わせは十時からです",
+            sanctionedTerms: ["ProjectAurora", "Kubernetes"]
+        )
+
+        #expect(applied == 0)
+    }
+
     @Test("a sentence lifted from the screen is caught")
     func copiedSentenceIsCaught() {
         let verdict = guardian.inspect(

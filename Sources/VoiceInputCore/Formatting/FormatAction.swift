@@ -99,6 +99,23 @@ public struct FormatAction: VoiceAction {
         let elapsed = clock().timeIntervalSince(started)
         guard !text.isEmpty else { throw VoiceInputError.emptyTranscript }
 
+        if !terms.isEmpty {
+            // One line per dictation that carried candidates, so a run of them
+            // answers the question the counts above cannot: did the screen
+            // actually change the text the user got?
+            let applied =
+                discardedScreenContext
+                ? 0
+                : guardian.appliedTerms(output: text, transcript: raw, sanctionedTerms: terms)
+            Self.log.notice(
+                """
+                screen context result: candidates=\(terms.count, privacy: .public) \
+                applied=\(applied, privacy: .public) \
+                discarded=\(discardedScreenContext, privacy: .public)
+                """
+            )
+        }
+
         return ActionOutcome(
             text: text,
             copyToClipboard: true,

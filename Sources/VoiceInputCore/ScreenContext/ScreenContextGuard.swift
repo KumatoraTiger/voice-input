@@ -98,6 +98,39 @@ public struct ScreenContextGuard: Sendable {
         return Verdict(isContaminated: longest > 0, offendingLength: longest)
     }
 
+    // MARK: - Yield
+
+    /// How many sanctioned terms the model actually put to work: present in the
+    /// output, absent from the transcript.
+    ///
+    /// The same relation `inspect` reasons about, read the other way round.
+    /// Contamination is screen text in the output that we did *not* sanction;
+    /// yield is screen text in the output that we *did*, and that the recogniser
+    /// had not already produced on its own. A term the transcript already spelled
+    /// correctly does not count, because the screen changed nothing there.
+    ///
+    /// This is a count, never the terms, for the reason given above the type.
+    ///
+    /// It measures application, not benefit. A model can reach the right spelling
+    /// without the hint, and this cannot tell that case from a genuine correction;
+    /// only formatting the same dictation both ways could. Read it as an upper
+    /// bound on what the screen contributed.
+    public func appliedTerms(
+        output: String,
+        transcript: String,
+        sanctionedTerms: [String]
+    ) -> Int {
+        let produced = Self.compact(output)
+        let spoken = Self.compact(transcript)
+
+        return
+            sanctionedTerms
+            .map(Self.compact)
+            .filter { !$0.isEmpty }
+            .filter { produced.contains($0) && !spoken.contains($0) }
+            .count
+    }
+
     // MARK: - Normalisation
 
     private static let sentinel: Character = "\u{0}"
