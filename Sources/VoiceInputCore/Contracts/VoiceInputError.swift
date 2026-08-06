@@ -21,6 +21,9 @@ public enum VoiceInputError: Error, Sendable, Equatable {
     /// for providers that put the model in the URL path (Gemini).
     case invalidModelName(provider: String, model: String)
     case networkFailure(String)
+    /// The engine did not become ready in time — typically a wedged speech
+    /// daemon whose XPC calls never return. Retrying opens a fresh connection.
+    case preparationTimedOut
     case cancelled
 }
 
@@ -48,6 +51,7 @@ extension VoiceInputError {
         case .providerDecodingFailed(let provider, _): return "providerDecodingFailed(\(provider))"
         case .invalidModelName(let provider, _): return "invalidModelName(\(provider))"
         case .networkFailure: return "networkFailure"
+        case .preparationTimedOut: return "preparationTimedOut"
         case .cancelled: return "cancelled"
         }
     }
@@ -84,6 +88,8 @@ extension VoiceInputError: LocalizedError {
             return "\(provider) のモデル名が不正です: \(model)"
         case .networkFailure(let detail):
             return "ネットワークエラー: \(detail)"
+        case .preparationTimedOut:
+            return "音声認識エンジンの準備がタイムアウトしました。"
         case .cancelled:
             return "キャンセルされました。"
         }
@@ -102,6 +108,8 @@ extension VoiceInputError: LocalizedError {
             return "もう一度質問するか、設定 → 質問 で別のモデルを試してください。"
         case .invalidModelName:
             return "設定 → 整形 でモデル名を確認してください。空欄にすると既定のモデルを使います。"
+        case .preparationTimedOut:
+            return "もう一度お試しください。改善しない場合は VoiceInput を再起動してください。"
         default:
             return nil
         }

@@ -62,6 +62,11 @@ public final class DictationCoordinator {
     /// something to show. Tests set this to zero.
     public var finishedStateDuration: Duration = .milliseconds(800)
 
+    /// How long the engine may take to open a session before the run fails with
+    /// `.preparationTimedOut`. The permission preflight is not counted — its TCC
+    /// dialog waits on the user. Tests shorten this.
+    public var preparationTimeout: TimeInterval = 10
+
     // MARK: Dependencies
 
     private let audio: any AudioCapturing
@@ -222,23 +227,43 @@ public final class DictationCoordinator {
             capturedFrontmostAppName = frontmostAppNameProvider?()
             try await preflight?()
             let engine = try resolveEngine()
-            let locale = settings.locale
-            let availability = await engine.availability(locale: locale)
-            guard availability.isUsable else {
-                throw VoiceInputError.engineUnavailable(
-                    engine.id,
-                    availability.detail ?? "現在は利用できません。"
-                )
-            }
-
+            let engineID = engine.id
             let configuration = TranscriptionConfiguration(
-                locale: locale,
+                locale: settings.locale,
                 format: .capture,
                 contextualStrings: settings.vocabulary,
                 model: settings.transcriptionModel.nilIfEmpty
             )
-            let session = try await engine.makeSession(configuration: configuration)
+            Self.log.notice("preparing: engine=\(engineID.rawValue, privacy: .public)")
+            let preparingSince = Date()
+
+            // The engine probes can block forever on a wedged speech daemon (an
+            // XPC call that never answers). The race abandons them instead of
+            // waiting; the next start() builds a fresh session over a fresh
+            // connection, which is how the app reconnects once the daemon
+            // recovers.
+            let locale = configuration.locale
+            let session = try await PreparationTimeout.run(
+                seconds: preparationTimeout,
+                onTimeout: { VoiceInputError.preparationTimedOut },
+                onAbandonedResult: { session in Task { await session.cancel() } }
+            ) {
+                let availability = await engine.availability(locale: locale)
+                guard availability.isUsable else {
+                    throw VoiceInputError.engineUnavailable(
+                        engineID,
+                        availability.detail ?? "現在は利用できません。"
+                    )
+                }
+                return try await engine.makeSession(configuration: configuration)
+            }
             self.session = session
+            Self.log.notice(
+                """
+                session ready: engine=\(engineID.rawValue, privacy: .public) \
+                waitedMs=\(Int(Date().timeIntervalSince(preparingSince) * 1000), privacy: .public)
+                """
+            )
 
             guard state == .preparing else {
                 // Cancelled while the engine was warming up.

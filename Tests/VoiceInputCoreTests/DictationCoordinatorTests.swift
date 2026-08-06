@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import os
 
 @testable import VoiceInputCore
 
@@ -32,7 +33,7 @@ struct DictationCoordinatorTests {
 
     private func makeHarness(
         settings: AppSettings = AppSettings(),
-        engine: FakeTranscriptionEngine = FakeTranscriptionEngine(transcript: "えーっと 生の書き起こし"),
+        engine: any TranscriptionEngine = FakeTranscriptionEngine(transcript: "えーっと 生の書き起こし"),
         apiKey: String? = "sk-test",
         reply: String = "整形されたテキスト。",
         llmError: VoiceInputError? = nil,
@@ -803,5 +804,102 @@ struct DictationCoordinatorTests {
         await coordinator.waitUntilIdle()
 
         #expect(harness.feedback.events.isEmpty)
+    }
+
+    // MARK: Preparation timeout
+
+    @Test("preparation that never completes fails with preparationTimedOut")
+    func preparationTimesOut() async throws {
+        let engine = StallingEngine()
+        let harness = makeHarness(engine: engine)
+        let coordinator = harness.coordinator
+        coordinator.preparationTimeout = 0.05
+
+        coordinator.start()
+        await coordinator.waitUntilIdle()
+
+        #expect(coordinator.state == .failed(.preparationTimedOut))
+        #expect(harness.feedback.events == [.failed])
+
+        // The stuck first attempt must not block a retry: the next start()
+        // reaches the engine again with a fresh session request.
+        coordinator.start()
+        #expect(coordinator.state == .preparing)
+        await coordinator.waitUntilIdle()
+        #expect(engine.makeSessionCalls == 2)
+    }
+
+    @Test("a session that opens after the timeout is cancelled, not leaked")
+    func lateSessionIsCancelled() async throws {
+        let engine = StallingEngine(sessionDelay: .milliseconds(150))
+        let harness = makeHarness(engine: engine)
+        let coordinator = harness.coordinator
+        coordinator.preparationTimeout = 0.05
+
+        coordinator.start()
+        await coordinator.waitUntilIdle()
+        #expect(coordinator.state == .failed(.preparationTimedOut))
+
+        var attempts = 100
+        while engine.createdSession == nil, attempts > 0 {
+            try await Task.sleep(for: .milliseconds(10))
+            attempts -= 1
+        }
+        let session = try #require(engine.createdSession)
+
+        attempts = 100
+        while (await session.wasCancelled) == false, attempts > 0 {
+            try await Task.sleep(for: .milliseconds(10))
+            attempts -= 1
+        }
+        #expect(await session.wasCancelled)
+    }
+}
+
+/// An engine whose `makeSession` stalls, like a wedged speech daemon.
+private final class StallingEngine: TranscriptionEngine, @unchecked Sendable {
+    let id: TranscriptionEngineID = .appleOnDevice
+    let displayName = "応答しないエンジン"
+    let supportsStreamingPartials = false
+
+    /// `nil`: never returns (gives up only when its task is cancelled).
+    /// Otherwise: a session appears after this long, *surviving cancellation* —
+    /// an XPC reply that arrives after the caller stopped waiting.
+    private let sessionDelay: Duration?
+    private let storedSession = OSAllocatedUnfairLock<FakeTranscriptionSession?>(initialState: nil)
+    private let storedCalls = OSAllocatedUnfairLock<Int>(initialState: 0)
+
+    init(sessionDelay: Duration? = nil) {
+        self.sessionDelay = sessionDelay
+    }
+
+    var createdSession: FakeTranscriptionSession? { storedSession.withLock { $0 } }
+    var makeSessionCalls: Int { storedCalls.withLock { $0 } }
+
+    func availability(locale: Locale) async -> EngineAvailability { .available }
+
+    func makeSession(
+        configuration: TranscriptionConfiguration
+    ) async throws -> any TranscriptionSession {
+        storedCalls.withLock { $0 += 1 }
+
+        guard let sessionDelay else {
+            try await Task.sleep(for: .seconds(3600))
+            throw VoiceInputError.cancelled
+        }
+        let clock = ContinuousClock()
+        let deadline = clock.now + sessionDelay
+        while clock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        let session = FakeTranscriptionSession(
+            transcript: "遅れて届いた結果",
+            partials: [],
+            engine: id,
+            locale: configuration.locale.identifier,
+            finishError: nil
+        )
+        storedSession.withLock { $0 = session }
+        return session
     }
 }

@@ -111,6 +111,17 @@ stateDiagram-v2
   Settings to enter a key).
 - Cancel is always available: it tears down the session, discards audio and text,
   and returns to `idle` without producing output.
+- `preparing` cannot last forever. Opening an engine session probes the OS speech
+  daemons over XPC, and a wedged daemon can simply never answer; the coordinator
+  races the whole engine-opening step against `preparationTimeout` (10 s) and fails
+  with `.preparationTimedOut` rather than waiting. The stuck probe is abandoned, so
+  the *next* start builds a fresh session over a fresh connection — pressing the
+  hotkey again reconnects once the daemon recovers, no app restart needed. The
+  permission preflight runs before the clock starts: its TCC dialog waits on the
+  user, and that wait must not count. A session that opens after the deadline is
+  cancelled, never leaked. (`Pipeline/PreparationTimeout.swift`;
+  `AppleOnDeviceEngine` additionally keeps these blocking probes off the
+  cooperative thread pool so an abandoned one costs a thread, not the app.)
 - Asking a question adds **no state**. `AskAction` walks the same path as
   `FormatAction`, so `formatting` covers "waiting on the LLM" either way;
   `DictationCoordinator.currentAction` is what the HUD reads to say 「回答を作成中…」

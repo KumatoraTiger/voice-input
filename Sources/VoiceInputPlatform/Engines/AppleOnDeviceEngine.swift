@@ -23,6 +23,27 @@ public struct AppleOnDeviceEngine: TranscriptionEngine {
     public var supportsStreamingPartials: Bool { true }
 
     public func availability(locale: Locale) async -> EngineAvailability {
+        await Self.offCooperativePool { Self.probeAvailability(locale: locale) }
+    }
+
+    /// `SFSpeechRecognizer`'s probes (`init`, `supportsOnDeviceRecognition`,
+    /// `isAvailable`) are synchronous XPC round-trips into the speech daemons.
+    /// When a daemon is wedged they block indefinitely, and blocking a
+    /// cooperative-pool thread would starve every other task in the app. Each
+    /// call gets a thread of its own, which the caller may abandon (the
+    /// coordinator's preparation timeout) at the cost of that one thread until
+    /// the call returns.
+    private static func offCooperativePool<T: Sendable>(
+        _ body: @escaping @Sendable () -> T
+    ) async -> T {
+        await withCheckedContinuation { continuation in
+            Thread.detachNewThread {
+                continuation.resume(returning: body())
+            }
+        }
+    }
+
+    private static func probeAvailability(locale: Locale) -> EngineAvailability {
         guard let recognizer = SFSpeechRecognizer(locale: locale) else {
             return EngineAvailability(
                 status: .unsupportedLocale(locale.identifier),
@@ -82,14 +103,23 @@ public struct AppleOnDeviceEngine: TranscriptionEngine {
                 availability.detail ?? "利用できません。"
             )
         }
-        guard let recognizer = SFSpeechRecognizer(locale: configuration.locale) else {
+        // The recognizer and its first recognition task talk to the same daemons
+        // as the probes, so they open off the pool too.
+        let timeout = finalResultTimeout
+        let session = await Self.offCooperativePool { () -> AppleOnDeviceSession? in
+            guard let recognizer = SFSpeechRecognizer(locale: configuration.locale) else {
+                return nil
+            }
+            return AppleOnDeviceSession(
+                recognizer: recognizer,
+                configuration: configuration,
+                timeout: timeout
+            )
+        }
+        guard let session else {
             throw VoiceInputError.engineUnavailable(id, "音声認識器を作成できませんでした。")
         }
-        return AppleOnDeviceSession(
-            recognizer: recognizer,
-            configuration: configuration,
-            timeout: finalResultTimeout
-        )
+        return session
     }
 }
 
