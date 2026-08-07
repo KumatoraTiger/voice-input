@@ -101,9 +101,9 @@ struct AskPromptBuilderTests {
     func glossary() {
         let withWords = builder.build(
             question: "シャペロンの方針は",
-            settings: settings(vocabulary: ["Shaperon", "SwiftPM"])
+            settings: settings(vocabulary: ["Contoso", "SwiftPM"])
         )
-        #expect(withWords.user.contains("- Shaperon"))
+        #expect(withWords.user.contains("- Contoso"))
         #expect(withWords.user.contains("用語集"))
 
         let without = builder.build(question: "質問", settings: settings())

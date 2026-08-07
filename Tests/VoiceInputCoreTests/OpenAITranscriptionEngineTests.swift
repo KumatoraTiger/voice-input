@@ -66,7 +66,7 @@ struct OpenAITranscriptionEngineTests {
         let configuration = TranscriptionConfiguration(
             locale: Locale(identifier: "ja-JP"),
             format: .capture,
-            contextualStrings: ["Shaperon", "  "],
+            contextualStrings: ["Contoso", "  "],
             model: nil
         )
         let session = try await engine.makeSession(configuration: configuration)
@@ -91,7 +91,7 @@ struct OpenAITranscriptionEngineTests {
         #expect(text.contains("RIFF"))
         #expect(text.contains("name=\"model\"\r\n\r\ngpt-4o-transcribe"))
         #expect(text.contains("name=\"language\"\r\n\r\nja"))
-        #expect(text.contains("name=\"prompt\"\r\n\r\nShaperon"))
+        #expect(text.contains("name=\"prompt\"\r\n\r\nContoso"))
         #expect(text.contains("name=\"response_format\"\r\n\r\njson"))
     }
 

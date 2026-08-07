@@ -126,6 +126,27 @@ CI has a best-effort job that compiles it when an SDK-26 runner is available.
 8. **Errors are typed.** Add a case to `VoiceInputError` with a Japanese
    `errorDescription` (and a `recoverySuggestion` when the user can act on it)
    rather than throwing a bare `NSError` or a string.
+9. **Never commit real-world material from your own machine.** Rule 1 covers
+   credentials; this covers everything else that is real. No employer or client
+   name, no colleague's name, no internal project, service or schema name, no
+   branch or ticket title from another repository, and nothing you read off your
+   own screen while testing — not in code, comments, tests, fixtures, docs,
+   commit messages, or a pull request description.
+
+   Two things make this easy to get wrong here. Debugging this app means staring
+   at real transcripts and real screen contents, so the nearest example to hand is
+   almost always a real one; and an example that came from a live session *reads*
+   more convincing than an invented one, which is exactly why it is tempting.
+   Neither is a reason. Use invented placeholders that tell a reader they are
+   looking at a fixture — `Contoso`, `ProjectAurora`, `user_id`,
+   `DATABASE_CONNECTION_TIMEOUT` — and pick generic technical terms (`SQL`,
+   `Kubernetes`, `Terraform`) when an example needs a real-sounding proper noun.
+
+   `Scripts/check_secrets.sh` enforces this from an optional `.check-secrets-local`
+   — one term per line, matched literally and case-insensitively. That file is
+   gitignored on purpose: listing the terms in a tracked file would publish the
+   words the rule exists to keep out. Add to it as you notice things; the check
+   reports `path:line — local-denylist` and never echoes the term.
 
 ## Recipes
 
