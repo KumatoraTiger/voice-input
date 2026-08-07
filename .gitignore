@@ -58,3 +58,8 @@ credentials.json
 *.keystore
 *.mobileprovision
 *.cer
+
+# Local denylist for Scripts/check_secrets.sh: employer, colleague and internal
+# project names that must not reach this public repository. Deliberately not
+# tracked — committing the list would publish the words it exists to keep out.
+.check-secrets-local

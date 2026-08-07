@@ -100,10 +100,10 @@ struct AskPromptBuilderTests {
     @Test("the glossary is a reading hint, and is omitted when empty")
     func glossary() {
         let withWords = builder.build(
-            question: "シャペロンの方針は",
-            settings: settings(vocabulary: ["Shaperon", "SwiftPM"])
+            question: "コントソの方針は",
+            settings: settings(vocabulary: ["Contoso", "SwiftPM"])
         )
-        #expect(withWords.user.contains("- Shaperon"))
+        #expect(withWords.user.contains("- Contoso"))
         #expect(withWords.user.contains("用語集"))
 
         let without = builder.build(question: "質問", settings: settings())
