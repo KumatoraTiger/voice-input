@@ -20,7 +20,7 @@ struct SettingsStoreTests {
         settings.transcriptionEngine = .openAICloud
         settings.localeIdentifier = "en-US"
         settings.transcriptionModel = "whisper-1"
-        settings.vocabulary = ["Shaperon", "SwiftPM"]
+        settings.vocabulary = ["Contoso", "SwiftPM"]
         settings.llmProvider = .gemini
         settings.models = [
             .openAI: "gpt-4.1",

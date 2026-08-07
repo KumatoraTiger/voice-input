@@ -60,6 +60,28 @@ RULES=(
     "absolute-user-path|${F_USERS}[A-Za-z0-9._-]{2,}/"
 )
 
+# --- optional local denylist --------------------------------------------------
+# Strings that must not reach this PUBLIC repository but cannot be listed inside
+# it: an employer or client name, a colleague's name, an internal project or
+# service name, a term read off your screen while testing. Writing them into the
+# rule table above would publish the very words the rule exists to keep out, so
+# they live in a gitignored file instead — the check runs, the repository stays
+# quiet about what it is checking for.
+#
+# Format: one term per line. Blank lines and lines beginning with # are ignored.
+# Matching is literal (not a regex) and case-insensitive. Findings are reported as
+# path:line — local-denylist, so the term is never echoed either.
+LOCAL_DENYLIST_FILE="${REPO_ROOT}/.check-secrets-local"
+LOCAL_TERMS=()
+if [[ -f "${LOCAL_DENYLIST_FILE}" ]]; then
+    while IFS= read -r line || [[ -n "${line}" ]]; do
+        line="${line%%$'\r'}"
+        if [[ -z "${line}" ]]; then continue; fi
+        if [[ "${line}" == \#* ]]; then continue; fi
+        LOCAL_TERMS+=("${line}")
+    done < "${LOCAL_DENYLIST_FILE}"
+fi
+
 # --- collect the file list ----------------------------------------------------
 FILE_LIST="$(mktemp -t voiceinput-secrets)"
 cleanup() { rm -f "${FILE_LIST}"; }
@@ -112,6 +134,23 @@ for rule in "${RULES[@]}"; do
     done <<< "${hits}"
 done
 
+# -F for literal matching and -i for case-insensitivity: these are words, not
+# patterns, and a term retyped with different capitalisation is the same leak.
+for term in ${LOCAL_TERMS+"${LOCAL_TERMS[@]}"}; do
+    hits="$(xargs -0 grep -HIniF -e "${term}" -- < "${FILE_LIST}" 2>/dev/null || true)"
+    if [[ -z "${hits}" ]]; then continue; fi
+
+    while IFS= read -r hit; do
+        if [[ -z "${hit}" ]]; then continue; fi
+        case "${hit}" in
+            *"${ALLOW_MARKER}"*) continue ;;
+        esac
+        location="$(printf '%s' "${hit}" | cut -d: -f1,2)"
+        printf '  %s — local-denylist\n' "${location}" >> "${REPORT}"
+        FINDINGS=$((FINDINGS + 1))
+    done <<< "${hits}"
+done
+
 if (( FINDINGS > 0 )); then
     fail "check_secrets: ${FINDINGS} potential secret(s) or machine-specific path(s) found:"
     sort -u "${REPORT}" >&2
@@ -122,9 +161,12 @@ if (( FINDINGS > 0 )); then
       entered by the user in Settings — never in a file, never in a test fixture.
     * Absolute home-directory paths break every other machine; derive paths from
       \${BASH_SOURCE[0]} in scripts, or Bundle/FileManager in Swift.
+    * local-denylist means a term from .check-secrets-local reached a file: a real
+      employer, person, or internal name. Replace it with an invented placeholder
+      (Contoso, ProjectAurora, user_id) rather than deleting the fixture.
   If a match is genuinely safe, append the comment marker "${ALLOW_MARKER}" to that line.
 EOF
     exit 1
 fi
 
-info "check_secrets: clean (${FILE_COUNT} files, ${#RULES[@]} rules)."
+info "check_secrets: clean (${FILE_COUNT} files, ${#RULES[@]} rules, ${#LOCAL_TERMS[@]} local terms)."

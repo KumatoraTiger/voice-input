@@ -130,11 +130,11 @@ struct FormattingPromptBuilderTests {
     func userPromptContents() {
         let prompt = builder.build(
             transcript: "こんにちは",
-            settings: settings(vocabulary: ["Shaperon", "SwiftPM"], styleInstructions: "箇条書きにする")
+            settings: settings(vocabulary: ["Contoso", "SwiftPM"], styleInstructions: "箇条書きにする")
         )
 
         #expect(prompt.user.contains("箇条書きにする"))
-        #expect(prompt.user.contains("- Shaperon"))
+        #expect(prompt.user.contains("- Contoso"))
         #expect(prompt.user.contains("- SwiftPM"))
         #expect(prompt.user.contains("ja-JP"))
         #expect(prompt.user.contains(FormattingPromptBuilder.openingTag))

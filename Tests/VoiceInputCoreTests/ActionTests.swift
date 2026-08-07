@@ -10,7 +10,7 @@ struct ActionTests {
         models: [LLMProviderID: String] = [:]
     ) -> AppSettings {
         AppSettings(
-            vocabulary: ["Shaperon"],
+            vocabulary: ["Contoso"],
             models: models,
             autoPasteEnabled: autoPaste
         )
@@ -68,7 +68,7 @@ struct ActionTests {
         #expect(request.model == "gpt-4.1")
         #expect(request.systemPrompt?.isEmpty == false)
         #expect(request.messages.first?.content.contains("えーっと これは テスト") == true)
-        #expect(request.messages.first?.content.contains("Shaperon") == true)
+        #expect(request.messages.first?.content.contains("Contoso") == true)
     }
 
     @Test("model falls back to the provider default")
