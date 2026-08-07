@@ -5,34 +5,38 @@ import Foundation
 ///
 /// ## What it is for
 ///
-/// Everything else in this feature makes contamination *unlikely*. This makes it
-/// *detectable*, which is a different and stronger property — it is the only
-/// layer that can tell, after the model has replied, that something went wrong.
+/// Since the prompt carries the screen's text rather than a filtered word list,
+/// this is the only remaining check that does not depend on the model behaving.
+/// It cannot make contamination unlikely; it makes it *detectable*, which is what
+/// allows the dictation to recover instead of pasting the result.
 ///
 /// ## The question it asks
 ///
 /// Formatting has a narrow contract: clean up the transcript, add no information.
-/// Screen context widens it by exactly one allowance — the model may re-spell a
-/// word using a term we handed it. So the output is suspect when it contains a
-/// long span that
+/// Screen context widens it by one allowance — the model may re-spell a word it
+/// recognises on screen. A respelling is *short*: `SQL`, `API`, a product name.
+/// So the output is suspect when it contains a **long** span that
 ///
 /// - appears in what OCR read, and
-/// - does **not** appear in the transcript, and
-/// - is not one of the terms we sanctioned.
+/// - does **not** appear in the transcript.
 ///
-/// That is the signature of both failure modes at once: an injected instruction
-/// the model obeyed, and screen content the model simply copied. Neither can
-/// happen without screen text surfacing in the output.
+/// That is the signature of both failure modes at once: an injected instruction the
+/// model obeyed, and screen content the model simply copied. Neither can happen
+/// without screen text surfacing in the output at length.
 ///
 /// ## Why it does not fire on ordinary formatting
 ///
-/// The checks are on *long* spans of screen text. Deleting fillers, adding
-/// punctuation, reordering a clause and fixing a homophone all produce short,
-/// local changes that are not lifted from the screen. A creative custom style can
-/// rewrite freely without tripping this, because rewriting does not reproduce
-/// screen text. The false-positive path that remains — a common phrase that
-/// happens to be on screen, in the output, and absent from the transcript — is
-/// bounded by `minimumRun` and costs only a retry.
+/// The check is on long spans. Deleting fillers, adding punctuation, reordering a
+/// clause and fixing a homophone all produce short, local changes that are not
+/// lifted from the screen. A creative custom style can rewrite freely without
+/// tripping this, because rewriting does not reproduce screen text.
+///
+/// Two false-positive paths remain, and both cost only a retry: a common phrase
+/// that happens to be on screen, in the output, and absent from the transcript; and
+/// a legitimate correction longer than `minimumRun`, such as an identifier like
+/// `DATABASE_CONNECTION_TIMEOUT` being spelled out from the screen. The second is
+/// the price of dropping the sanctioned-term list — with no list, a long correction
+/// and a long copy look alike.
 ///
 /// ## What the verdict deliberately omits
 ///
@@ -65,32 +69,40 @@ public struct ScreenContextGuard: Sendable {
     public func inspect(
         output: String,
         transcript: String,
-        screenText: String,
-        sanctionedTerms: [String]
+        screenText: String
     ) -> Verdict {
         let screen = Self.compact(screenText)
         guard screen.count >= minimumRun else { return .clean }
 
         let spoken = Self.compact(transcript)
-        let masked = Self.mask(
-            Self.compact(output),
-            removing: sanctionedTerms.map(Self.compact)
+        let produced = Self.compact(output)
+        guard produced.count >= minimumRun else { return .clean }
+
+        // A span sitting inside a single word run on screen is one word, however
+        // long, and one word is the thing the model is allowed to take. Identifiers
+        // are what make this necessary: `DATABASE_CONNECTION_TIMEOUT` and
+        // `ScreenCaptureKit` are longer than `minimumRun` and are exactly the
+        // spellings the feature exists to fix, so length alone cannot separate a
+        // respelling from a copy. Word count can — an instruction, or a sentence
+        // lifted from the screen, needs more than one word to exist. That is the
+        // argument the discarded token-only filter used to make at extraction time,
+        // applied here instead.
+        let screenWords = Set(
+            ScreenTextScanner.runs(in: screenText).map { ScreenTextScanner.fold($0.text) }
         )
-        guard masked.count >= minimumRun else { return .clean }
 
         var longest = 0
-        let characters = Array(masked)
+        let characters = Array(produced)
 
         for start in characters.indices {
             var end = start + minimumRun
             while end <= characters.count {
                 let span = String(characters[start..<end])
-                // The mask is not text the model produced, so a span may not
-                // straddle it.
-                if span.contains(Self.sentinel) { break }
                 // Nothing longer can be on screen either, so stop extending.
                 guard screen.contains(span) else { break }
-                if !spoken.contains(span) { longest = max(longest, span.count) }
+                if !spoken.contains(span), !screenWords.contains(where: { $0.contains(span) }) {
+                    longest = max(longest, span.count)
+                }
                 end += 1
             }
         }
@@ -98,42 +110,7 @@ public struct ScreenContextGuard: Sendable {
         return Verdict(isContaminated: longest > 0, offendingLength: longest)
     }
 
-    // MARK: - Yield
-
-    /// How many sanctioned terms the model actually put to work: present in the
-    /// output, absent from the transcript.
-    ///
-    /// The same relation `inspect` reasons about, read the other way round.
-    /// Contamination is screen text in the output that we did *not* sanction;
-    /// yield is screen text in the output that we *did*, and that the recogniser
-    /// had not already produced on its own. A term the transcript already spelled
-    /// correctly does not count, because the screen changed nothing there.
-    ///
-    /// This is a count, never the terms, for the reason given above the type.
-    ///
-    /// It measures application, not benefit. A model can reach the right spelling
-    /// without the hint, and this cannot tell that case from a genuine correction;
-    /// only formatting the same dictation both ways could. Read it as an upper
-    /// bound on what the screen contributed.
-    public func appliedTerms(
-        output: String,
-        transcript: String,
-        sanctionedTerms: [String]
-    ) -> Int {
-        let produced = Self.compact(output)
-        let spoken = Self.compact(transcript)
-
-        return
-            sanctionedTerms
-            .map(Self.compact)
-            .filter { !$0.isEmpty }
-            .filter { produced.contains($0) && !spoken.contains($0) }
-            .count
-    }
-
     // MARK: - Normalisation
-
-    private static let sentinel: Character = "\u{0}"
 
     /// Word runs only, folded: punctuation, spacing and casing differ between a
     /// screen and a sentence for reasons that say nothing about provenance.
@@ -141,16 +118,5 @@ public struct ScreenContextGuard: Sendable {
         ScreenTextScanner.fold(
             ScreenTextScanner.runs(in: text).map(\.text).joined()
         )
-    }
-
-    /// Blanks out the terms we asked the model to use, so using them is not
-    /// mistaken for copying from the screen.
-    private static func mask(_ text: String, removing terms: [String]) -> String {
-        terms
-            .filter { !$0.isEmpty }
-            .sorted { $0.count > $1.count }
-            .reduce(text) { partial, term in
-                partial.replacingOccurrences(of: term, with: String(sentinel))
-            }
     }
 }

@@ -11,20 +11,17 @@ public struct FormatAction: VoiceAction {
     private static let log = Logger(subsystem: "io.github.voiceinput", category: "formatting")
 
     private let promptBuilder: FormattingPromptBuilder
-    private let matcher: ScreenTermMatcher
     private let guardian: ScreenContextGuard
     private let maxOutputTokens: Int
     private let clock: @Sendable () -> Date
 
     public init(
         promptBuilder: FormattingPromptBuilder = FormattingPromptBuilder(),
-        matcher: ScreenTermMatcher = ScreenTermMatcher(),
         guardian: ScreenContextGuard = ScreenContextGuard(),
         maxOutputTokens: Int = 4096,
         clock: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.promptBuilder = promptBuilder
-        self.matcher = matcher
         self.guardian = guardian
         self.maxOutputTokens = maxOutputTokens
         self.clock = clock
@@ -50,13 +47,13 @@ public struct FormatAction: VoiceAction {
             .nilIfEmpty ?? provider.defaultModel
 
         let screen = screenContext(for: context)
-        let terms = screen.map { matcher.candidates(transcript: raw, terms: $0.terms) } ?? []
-        Self.logScreenContext(screen, candidates: terms, settings: context.settings)
+        let screenText = screen?.text ?? ""
+        Self.logScreenContext(screen, settings: context.settings)
 
         let started = clock()
         var response = try await send(
             transcript: raw,
-            screenTerms: terms,
+            screenText: screenText,
             model: model,
             provider: provider,
             apiKey: apiKey,
@@ -65,16 +62,15 @@ public struct FormatAction: VoiceAction {
         var text = Self.cleanReply(response.text)
         var discardedScreenContext = false
 
-        // The screen influenced the answer; check that only the sanctioned part
-        // of it did. A failure here is not an error — it is a reason to ask
-        // again with the screen left out entirely, which by construction cannot
-        // be contaminated.
-        if let screen, !terms.isEmpty {
+        // The screen influenced the answer; check that it influenced the spelling
+        // and not the content. A failure here is not an error — it is a reason to
+        // ask again with the screen left out entirely, which by construction
+        // cannot be contaminated.
+        if let screen {
             let verdict = guardian.inspect(
                 output: text,
                 transcript: raw,
-                screenText: screen.fullText,
-                sanctionedTerms: terms
+                screenText: screen.text
             )
             if verdict.isContaminated {
                 Self.log.warning(
@@ -85,7 +81,7 @@ public struct FormatAction: VoiceAction {
                 )
                 response = try await send(
                     transcript: raw,
-                    screenTerms: [],
+                    screenText: "",
                     model: model,
                     provider: provider,
                     apiKey: apiKey,
@@ -99,23 +95,6 @@ public struct FormatAction: VoiceAction {
         let elapsed = clock().timeIntervalSince(started)
         guard !text.isEmpty else { throw VoiceInputError.emptyTranscript }
 
-        if !terms.isEmpty {
-            // One line per dictation that carried candidates, so a run of them
-            // answers the question the counts above cannot: did the screen
-            // actually change the text the user got?
-            let applied =
-                discardedScreenContext
-                ? 0
-                : guardian.appliedTerms(output: text, transcript: raw, sanctionedTerms: terms)
-            Self.log.notice(
-                """
-                screen context result: candidates=\(terms.count, privacy: .public) \
-                applied=\(applied, privacy: .public) \
-                discarded=\(discardedScreenContext, privacy: .public)
-                """
-            )
-        }
-
         return ActionOutcome(
             text: text,
             copyToClipboard: true,
@@ -128,30 +107,24 @@ public struct FormatAction: VoiceAction {
         )
     }
 
-    /// The one number that says whether the feature did anything: how much of the
-    /// screen's pool survived matching against what was actually said. `pool > 0`
-    /// with `candidates=0` is the honest failure mode — the screen was read and
-    /// nothing on it sounded like the dictation — and it is invisible without
-    /// this line.
-    private static func logScreenContext(
-        _ screen: ScreenContext?,
-        candidates: [String],
-        settings: AppSettings
-    ) {
+    /// How much of the screen this dictation carried, in characters, so a feature
+    /// that is silently doing nothing can be told from one that is working.
+    /// `none available` with the setting on means the read produced nothing — the
+    /// reason for that is in the `screen` category, from the provider.
+    private static func logScreenContext(_ screen: ScreenContext?, settings: AppSettings) {
         guard let screen else {
             if settings.screenContextEnabled {
                 log.notice("screen context: none available")
             }
             return
         }
+        let sent = min(screen.text.count, FormattingPromptBuilder.screenTextLimit)
         log.notice(
             """
-            screen context: pool=\(screen.terms.count, privacy: .public) \
-            candidates=\(candidates.count, privacy: .public)
+            screen context: chars=\(screen.text.count, privacy: .public) \
+            sent=\(sent, privacy: .public)
             """
         )
-        // Screen content: redacted unless private data is deliberately enabled.
-        log.debug("screen candidates: \(candidates.joined(separator: " "), privacy: .private)")
     }
 
     /// The screen is only consulted when the user asked for it. Reading the flag
@@ -164,7 +137,7 @@ public struct FormatAction: VoiceAction {
 
     private func send(
         transcript: String,
-        screenTerms: [String],
+        screenText: String,
         model: String,
         provider: any LLMProvider,
         apiKey: String,
@@ -173,7 +146,7 @@ public struct FormatAction: VoiceAction {
         let prompt = promptBuilder.build(
             transcript: transcript,
             settings: settings,
-            screenTerms: screenTerms
+            screenText: screenText
         )
         return try await provider.send(
             LLMRequest(

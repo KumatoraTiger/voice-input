@@ -199,10 +199,9 @@ plain shortcut, stops as usual.
 
 ### Screen context is gathered early and validated late
 
-`AppSettings.screenContextEnabled` (off by default) lets the formatting LLM see a
-handful of words read off the frontmost window, so it can fix a misrecognised
-product name. The pipeline touches it at three points, and the distance between
-them is the design:
+`AppSettings.screenContextEnabled` (off by default) lets the formatting LLM see the
+text of the frontmost window, so it can fix a misrecognised product name. The
+pipeline touches it at three points, and the distance between them is the design:
 
 1. **At recording start**, `beginScreenContextCapture()` kicks off
    `ScreenContextProviding.currentContext()` as an unstructured task, so the
@@ -213,15 +212,16 @@ them is the design:
 2. **At formatting time**, `makeContext(for:)` awaits that task through
    `withDeadline`, so a stalled capture bounds out instead of holding a finished
    dictation. The result reaches the action as `ActionContext.screenContext`.
-3. **Inside `FormatAction`**, `ScreenTermMatcher` narrows the terms to what was
-   actually spoken, `FormattingPromptBuilder` fences them, and
-   `ScreenContextGuard` inspects the reply. A contaminated reply is discarded and
-   the dictation is formatted once more with no screen context at all.
+3. **Inside `FormatAction`**, `FormattingPromptBuilder` truncates and fences the
+   text, and `ScreenContextGuard` inspects the reply. A contaminated reply is
+   discarded and the dictation is formatted once more with no screen context at all.
 
-The split matters: `ScreenContext.terms` may be put in a prompt,
-`ScreenContext.fullText` may not — it exists only so the guard can tell screen text
-apart from speech. Core owns all of the filtering and matching as pure functions;
-Platform owns only the capture. See `docs/SECURITY.md` for why each layer is there.
+`ScreenContext` holds one field, and it both travels to the provider and serves as
+the guard's reference for what the screen said. An earlier version split those roles
+— filtered words for the prompt, full text kept local — and gave that up because the
+filtering did not correct anything; `docs/SECURITY.md` records the measurements and
+what the reversal costs. Core owns the truncation, fencing and inspection as pure
+functions; Platform owns only the capture.
 
 ## Threading and actor rules
 

@@ -1,7 +1,12 @@
 import Foundation
 
-/// Shared text plumbing for the screen-context feature: splitting a string into
-/// word-like runs, and folding two strings into comparable keys.
+/// Text plumbing for `ScreenContextGuard`: splitting a string into word-like runs,
+/// and folding a string into a comparable key.
+///
+/// Both exist so the guard can ask whether a span of the output also appears on
+/// screen without punctuation, spacing or casing deciding the answer — those differ
+/// between a rendered UI and a sentence for reasons that say nothing about where
+/// the text came from.
 ///
 /// Japanese does not put spaces between words, so splitting on whitespace finds
 /// nothing useful in 「これはVoiceInputです」. Splitting on **script changes**
@@ -88,65 +93,4 @@ enum ScreenTextScanner {
         return hiragana.filter { $0 != "ー" && $0 != "・" && $0 != "ｰ" }
     }
 
-    /// A rough kana reading of latin text, so a katakana transcript can be
-    /// compared with a latin word on screen. ICU's transliteration is
-    /// approximate — good enough to rank candidates, not good enough to trust.
-    static func kanaReading(of text: String) -> String? {
-        let spaced = splitCamelCase(text).joined(separator: " ")
-        guard let kana = spaced.applyingTransform(.latinToHiragana, reverse: false) else {
-            return nil
-        }
-        let compact = kana.filter { !$0.isWhitespace }
-        return compact.isEmpty ? nil : fold(compact)
-    }
-
-    /// `VoiceInputCore` → `["Voice", "Input", "Core"]`; also splits on `_`, `-`
-    /// and digit boundaries. Leaves an all-caps word alone.
-    static func splitCamelCase(_ text: String) -> [String] {
-        var words: [String] = []
-        var current = ""
-        var previous: Character?
-
-        for character in text {
-            if character == "_" || character == "-" {
-                if !current.isEmpty { words.append(current) }
-                current = ""
-                previous = nil
-                continue
-            }
-            if let previous, character.isUppercase, previous.isLowercase || previous.isNumber {
-                words.append(current)
-                current = ""
-            }
-            current.append(character)
-            previous = character
-        }
-        if !current.isEmpty { words.append(current) }
-        return words.filter { !$0.isEmpty }
-    }
-
-    /// Levenshtein distance, bounded so a pathological input cannot cost much.
-    static func editDistance(_ lhs: String, _ rhs: String, limit: Int = 64) -> Int {
-        let a = Array(lhs.prefix(limit))
-        let b = Array(rhs.prefix(limit))
-        if a.isEmpty { return b.count }
-        if b.isEmpty { return a.count }
-
-        var previous = Array(0...b.count)
-        var current = [Int](repeating: 0, count: b.count + 1)
-
-        for i in 1...a.count {
-            current[0] = i
-            for j in 1...b.count {
-                let cost = a[i - 1] == b[j - 1] ? 0 : 1
-                current[j] = min(
-                    previous[j] + 1,
-                    current[j - 1] + 1,
-                    previous[j - 1] + cost
-                )
-            }
-            swap(&previous, &current)
-        }
-        return previous[b.count]
-    }
 }

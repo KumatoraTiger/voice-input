@@ -47,8 +47,9 @@ What is sent, precisely:
   style's instructions) and the raw transcript as a user message. Nothing else — no
   clipboard contents, no window titles, no file paths, no telemetry.
 - **LLM formatting with 画面コンテキスト on** (off by default, see below): additionally
-  a list of at most twelve isolated words read off the frontmost window. Never
-  sentences, never the screenshot, never the full OCR text.
+  the OCR text of the frontmost window, up to 4000 characters, with key-shaped strings
+  blanked out. Not the screenshot — but the text itself, including whatever other
+  people wrote in that window. Read the section below before enabling this.
 - **Asking a question** (the 質問 shortcut, off until you bind a key): the ask system
   prompt, the answer-length setting, your vocabulary, the locale, and the transcribed
   question as a user message. Same endpoints and the same provider as formatting, on
@@ -93,10 +94,12 @@ crash reports long after the request.
   content is ever logged for debugging it must be marked `privacy: .private` and
   left off by default. `VoiceInputError.kind` exists for exactly this reason: it
   names the failure case without its associated strings, which can quote speech.
-  画面コンテキスト follows the same split: OCR line counts, pool sizes and the number
-  of candidates that survived matching are logged as metadata, while the words
-  themselves go out at `.debug` marked `privacy: .private` — redacted unless someone
-  deliberately enables private data with `log config` on their own machine.
+  画面コンテキスト follows the same split: OCR line counts, character counts, how many
+  characters the prompt carried, and capture and recognition durations are logged as
+  metadata. **The screen text itself is never logged at any level**, not even
+  `privacy: .private` — it is the largest block of other people's content the app
+  handles, and a log is a file on disk, which is the one place none of this is
+  supposed to reach.
 - The only things on disk are `AppSettings` in `UserDefaults` (no secrets) and the
   Keychain items.
 
@@ -170,77 +173,117 @@ Where the licence stops, and why it is still safe to give:
   feature narrows spellings in a dictation; a question has nothing to do with what is
   on screen, and capturing it anyway would be a screen read with no purpose.
 
-## 画面コンテキスト: reading the screen without handing it to the model
+## 画面コンテキスト: sending the screen's text, and what that costs
 
 **Off by default.** Turning it on in Settings → 整形 is the consent moment, and the
 only thing that ever asks for the screen-recording permission.
 
 The feature exists because a recogniser cannot spell a name it has never seen, and
-the right spelling is often on screen. The risk it creates is that screen text is
-written by people who are not the user — colleagues, web pages, documents — so
-treating it the way the transcript is treated is not enough. Five layers, from
-strongest to weakest:
+the right spelling is usually on screen. **What reaches the prompt is the OCR text of
+the frontmost window**, up to 4000 characters, fenced as data. That is a deliberate
+reversal of how this shipped first, and the reasoning matters more than the code.
 
-**1. Only what was spoken gets through** (`ScreenTermMatcher`). Formatting runs
-*after* transcription, so the prompt does not have to carry the screen. It carries
-only the terms that are phonetically close to a word in the transcript. Someone who
-controls what is on screen therefore cannot place arbitrary text in the prompt:
-whatever they display is dropped unless the user happens to say something that
-sounds like it. This bounds the attack surface to the user's own speech.
+### Why not a filtered word list
 
-**2. Tokens, never sentences** (`ScreenTermExtractor`). Every candidate is a single
-word: no whitespace, at most 30 characters, no URL or path shape. An instruction
-needs a sentence to exist, and this filter makes sentences unrepresentable. The
-same filter drops the shapes secrets take — long letter-and-digit runs, all-digit
-strings — so an API key or a card number visible on screen is never a candidate.
+The first design extracted proper-noun-shaped words, kept only those phonetically
+close to something in the transcript, and sent at most twelve. It had two structural
+guarantees the current design does not: a sentence could not be represented in a word
+list, so screen text could not read as an instruction; and the phonetic gate bound
+the attack surface to the user's own speech, because nothing reached the prompt
+unless the user said something resembling it.
 
-This stage deliberately does **not** limit how many words survive in any meaningful
-sense (the cap is 400, and it is there to bound memory and comparison cost). It runs
-when recording starts, before a transcript exists, so it has nothing to rank
-relevance against and falls back to frequency — which on a real window favours
-chrome over the one proper noun being dictated. Narrowing is layer 1's job, and what
-reaches the prompt is capped there, at 12. A wider pool does mean more words are
-*eligible* for layer 1, so an attacker gets more attempts at the phonetic gate; each
-attempt still has to survive it, and still needs the user to utter something close,
-so the bound in layer 1 is unchanged in kind.
+It also did not work. Measured over 62 candidates from real screens it corrected one
+word. The failures were not tuning problems:
 
-**3. One window, and not every window.** Only the frontmost window is captured, so
-a chat in the background or a second display is never read. Password managers and
-Keychain Access are on a denylist that overrides the setting
-(`ScreenCaptureContextProvider.defaultExcludedBundleIDs`).
+- An acronym is transcribed as kana (「エスキューエル」 for `SQL`). No transliteration of
+  `SQL` resembles that, so the pair never matches.
+- Two words collapse into one katakana run (「デプロイトロールバック」 for 「デプロイとか
+  ロールバック」). A word list cannot split them.
+- A misread on screen (`管埋画面` for `管理画面`) looks exactly like a rare correct
+  spelling, so it was offered with the same authority — the pipeline's own errors
+  became authoritative suggestions.
 
-**4. A separate fence, declared as data** (`FormattingPromptBuilder`). Terms go in
-`<screen_terms>` … `</screen_terms>` in the *user* message, and the system prompt
-states that the range is a spelling dictionary, that nothing in it may be added to
-the output, and that instructions found there are not to be followed.
-`neutralize(_:)` defuses attempts to close either fence early. Like all
-prompt-level defences this is probabilistic, which is why the next one exists.
+Context resolves all three, because the surrounding text is what makes one reading
+plausible and another not. The same dictation that produced no correction from a
+four-word list produced `SQL`, `API` and 「接続設定を見直して」 from the text those
+words came from.
 
-**5. The output is checked** (`ScreenContextGuard`). Formatting's contract is to add
-no information, widened by exactly one allowance: the model may re-spell a word
-using a term we sanctioned. So a result is rejected when it contains a long span
-that appears in the OCR text, does not appear in the transcript, and is not one of
-the sanctioned terms. That signature covers both failure modes — an injected
-instruction the model obeyed, and screen content it simply copied. On detection the
-dictation is formatted again with the screen left out entirely, and the result is
-marked 画面コンテキスト破棄 in the history. The verdict carries a character count and
-never the offending text, so nothing screen-derived can reach a log.
+### What is left, and what is gone
 
-Layers 1, 2, 3 and 5 are structural; only layer 4 depends on the model behaving.
+Gone: the phonetic gate, and the token-only guarantee. Screen text now enters the
+prompt as prose, so an instruction sitting on screen *can* be represented, and what
+the attacker can place there is no longer bounded by what the user says.
+
+Calibrate that against the microphone, which this app has always accepted: anyone
+who can be heard — a colleague, a meeting, a video playing nearby — puts arbitrary
+natural language into the same prompt, with no length bound and no filter. The screen
+is a second unbounded channel rather than a new kind of risk. It is, however, an
+*easier* channel to attack, because a web page is simpler to arrange than audio near
+someone's microphone.
+
+What remains:
+
+**One window, not the screen.** Only the frontmost window is captured, so a chat in
+the background or a second display is never read. Password managers and Keychain
+Access are on a denylist that overrides the setting
+(`ScreenCaptureContextProvider.defaultExcludedBundleIDs`). With the whole text now
+travelling, this is the main bound on exposure.
+
+**Key-shaped strings are blanked out** (`ScreenSecretRedactor`). The deleted word
+filter rejected long letter-and-digit runs, which kept a visible API key out of the
+prompt as a side effect of keeping non-words out. The shape test does not depend on
+that design, so it was reapplied as redaction: runs are split on anything that is not
+a letter, a digit or `_` — so `sk-proj-…` comes apart and a JWT splits at its dots —
+and a run of 16 or more characters mixing letters with digits, or 13 or more digits
+alone, is replaced with `[redacted]` on the way into the prompt. It runs inside
+`FormattingPromptBuilder`, the only place screen text enters a prompt, so no caller
+can skip it.
+
+This is a mitigation and not a guarantee, and the distinction is the one the first
+version of this document got wrong. It does not catch a secret without digits in it,
+anything below the thresholds, or **prose** — which is the larger exposure and has no
+shape to key on. The suite asserts both halves: that key shapes are redacted, and
+that a sentence is not.
+
+**A separate fence, declared as data** (`FormattingPromptBuilder`). The text goes in
+`<screen_text>` … `</screen_text>` in the *user* message, and the system prompt states
+that the range is a spelling hint, that its contents must not be carried into the
+output, and that instructions found there are not to be followed.
+`neutralize(_:)` defuses attempts to close either fence early. This is a
+prompt-level defence, so it is probabilistic — which is why the next one exists.
+
+**The output is checked** (`ScreenContextGuard`). A respelling is short — `SQL`,
+`API`, a product name. So a result is rejected when it contains a span that
+appears in the OCR text, does not appear in the transcript, is longer than
+`minimumRun`, and **spans more than one word**. The word-count condition is what
+keeps `DATABASE_CONNECTION_TIMEOUT` from looking like a copy: an instruction, or a
+lifted sentence, needs more than one word to exist. That is the argument the deleted
+token-only filter used to make at extraction time, applied at detection time
+instead. On detection the dictation is formatted again with the screen left out
+entirely, and the result is marked 画面コンテキスト破棄 in the history. The verdict
+carries a character count and never the offending text, so nothing screen-derived
+reaches a log.
+
+**The result is text.** Formatting produces an `ActionOutcome`, which can hold text,
+a copy flag and a paste flag set by the action's own code. It cannot name a command,
+a file, a URL or a destination, and `LLMRequest` carries no tools and no function
+definitions, so the model has no way to act. A successful injection changes the
+words that land on the clipboard; it cannot do anything else.
 
 ### What this does not fix
 
-- Someone who controls the screen *and* can predict a word the user will say could
-  still get one token through. It lands as a wrong word in the pasted text — not as
-  a command, a request or a destination, because an `ActionOutcome` cannot express
-  any of those.
-- Privacy is a separate question from injection. Even filtered tokens are screen
-  content, and with a cloud provider configured they are sent to it. That is why
-  the feature is opt-in and why Settings says so next to the switch.
-- Vision's OCR runs on-device, but it is the *only* on-device part when formatting
-  is cloud-backed. Turning formatting off (整形オフ) makes screen context moot: no
-  LLM call, no terms, nothing read. Asking a question is the same: the action does
-  not declare `usesScreenContext`, so no capture happens.
+- **Privacy, which is the real cost here and is not an injection question.**
+  Everything legible in the frontmost window reaches the configured provider,
+  minus what `ScreenSecretRedactor` can recognise: other people's messages, customer
+  data and personal information are sent, because prose has no shape to key on.
+  This is why the feature is opt-in and why Settings says so next to the switch.
+- Text pasted into a terminal. Output goes to the clipboard and, with 自動ペースト on,
+  through a synthesised ⌘V — a real paste, so bracketed paste mode applies and
+  newlines do not execute on their own. Pressing Return still would.
+- Vision's OCR runs on-device, but it is the *only* on-device part when formatting is
+  cloud-backed. Turning formatting off (整形オフ) makes screen context moot: no LLM
+  call, nothing read. Asking a question is the same — the action does not declare
+  `usesScreenContext`, so no capture happens.
 
 ## Permissions
 
@@ -249,7 +292,7 @@ Layers 1, 2, 3 and 5 are structural; only layer 4 depends on the model behaving.
 | Microphone | always | to record you |
 | Speech Recognition | Apple engines only | `SFSpeechRecognizer` / `SpeechAnalyzer` |
 | Accessibility | 自動ペースト, or a modifier-only hotkey | synthesize ⌘V into the frontmost app; observe modifier keys globally |
-| Screen Recording | 画面コンテキスト only (off by default) | read the frontmost window so the LLM can fix misrecognised names |
+| Screen Recording | 画面コンテキスト only (off by default) | read the frontmost window's text so the LLM can fix misrecognised names; that text is sent to the configured provider |
 
 Accessibility and Screen Recording are the powerful ones, and they are the only
 permissions that touch other applications. Neither is requested at first launch —
