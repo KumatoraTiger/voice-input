@@ -165,16 +165,27 @@ public final class FakeLLMProvider: LLMProvider, @unchecked Sendable {
     public let apiKeyURL = URL(string: "https://example.invalid/keys")!
 
     private let storedRequests = OSAllocatedUnfairLock<[LLMRequest]>(initialState: [])
-    private let reply: String
+    private let replies: [String]
     private let error: VoiceInputError?
 
-    public init(
+    public convenience init(
         id: LLMProviderID = .openAI,
         reply: String = "整形されたテキスト。",
         error: VoiceInputError? = nil
     ) {
+        self.init(id: id, replies: [reply], error: error)
+    }
+
+    /// Answers each call with the next reply, repeating the last one. Lets a test
+    /// drive a flow that calls the provider more than once — `FormatAction`
+    /// retrying without screen context, for instance.
+    public init(
+        id: LLMProviderID = .openAI,
+        replies: [String],
+        error: VoiceInputError? = nil
+    ) {
         self.id = id
-        self.reply = reply
+        self.replies = replies.isEmpty ? [""] : replies
         self.error = error
     }
 
@@ -183,9 +194,17 @@ public final class FakeLLMProvider: LLMProvider, @unchecked Sendable {
     }
 
     public func send(_ request: LLMRequest, apiKey: String) async throws -> LLMResponse {
-        storedRequests.withLock { $0.append(request) }
+        let index = storedRequests.withLock { requests -> Int in
+            requests.append(request)
+            return requests.count - 1
+        }
         if let error { throw error }
-        return LLMResponse(text: reply, inputTokens: 10, outputTokens: 5, model: request.model)
+        return LLMResponse(
+            text: replies[min(index, replies.count - 1)],
+            inputTokens: 10,
+            outputTokens: 5,
+            model: request.model
+        )
     }
 }
 
@@ -215,5 +234,25 @@ public final class FakeOutputSink: OutputSink, @unchecked Sendable {
     public func paste(_ text: String) async throws {
         guard canPaste else { throw VoiceInputError.accessibilityPermissionDenied }
         storedPasted.withLock { $0.append(text) }
+    }
+}
+
+// MARK: - Screen context
+
+public final class FakeScreenContextProvider: ScreenContextProviding, @unchecked Sendable {
+    private let context: ScreenContext
+    private let storedCallCount = OSAllocatedUnfairLock(initialState: 0)
+
+    public init(_ context: ScreenContext) {
+        self.context = context
+    }
+
+    /// How many dictations actually consulted the screen. Zero is the assertion
+    /// that matters while the feature is off.
+    public var callCount: Int { storedCallCount.withLock { $0 } }
+
+    public func currentContext() async -> ScreenContext {
+        storedCallCount.withLock { $0 += 1 }
+        return context
     }
 }

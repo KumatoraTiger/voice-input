@@ -69,17 +69,23 @@ public struct ActionContext: Sendable {
     /// Name of the app that was frontmost when recording started, e.g. "Slack".
     /// Lets a future action adapt tone per target app.
     public var frontmostAppName: String?
+    /// What was readable on screen when recording started. `nil` unless the user
+    /// enabled `AppSettings.screenContextEnabled`. See `ScreenContext` for the
+    /// rules an action must respect before putting any of it in a prompt.
+    public var screenContext: ScreenContext?
 
     public init(
         settings: AppSettings,
         llm: (any LLMProvider)? = nil,
         apiKey: String? = nil,
-        frontmostAppName: String? = nil
+        frontmostAppName: String? = nil,
+        screenContext: ScreenContext? = nil
     ) {
         self.settings = settings
         self.llm = llm
         self.apiKey = apiKey
         self.frontmostAppName = frontmostAppName
+        self.screenContext = screenContext
     }
 }
 
@@ -88,7 +94,19 @@ public protocol VoiceAction: Sendable {
     var displayName: String { get }
     /// If true the action calls an LLM and therefore needs a configured provider.
     var requiresLLM: Bool { get }
+    /// If true the action reads `ActionContext.screenContext`.
+    ///
+    /// The coordinator uses this to decide whether to read the screen **at all**, so
+    /// an action that ignores the terms must not cause a capture. Needing an LLM is
+    /// not the same question: `AskAction` needs one and has no use for the screen.
+    var usesScreenContext: Bool { get }
     func run(transcript: Transcript, context: ActionContext) async throws -> ActionOutcome
+}
+
+extension VoiceAction {
+    /// Opt in explicitly. A new action that forgets to think about it gets the
+    /// answer that reads nothing off the user's screen.
+    public var usesScreenContext: Bool { false }
 }
 
 /// Where finished text goes.

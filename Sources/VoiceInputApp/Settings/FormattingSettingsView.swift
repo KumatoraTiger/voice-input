@@ -18,6 +18,48 @@ struct FormattingSettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("画面コンテキスト") {
+                Toggle("画面の文字を読んで固有名詞の表記を直す", isOn: screenContextBinding)
+                    .disabled(!settings.formattingEnabled)
+                Text(
+                    """
+                    最前面のウィンドウだけを読み取り、そこに写っていた文字を\
+                    整形の参考として送ります。画面収録の許可が必要です。
+                    """
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+                if settings.screenContextEnabled {
+                    if environment.permissions.screenRecording == .granted {
+                        Label("画面収録は許可されています。", systemImage: "checkmark.circle")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        HStack(spacing: 8) {
+                            Label("画面収録が許可されていません。", systemImage: "exclamationmark.triangle")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                            Button("システム設定を開く") {
+                                environment.permissions.openScreenRecordingSettings()
+                            }
+                            .buttonStyle(.link)
+                            .font(.caption)
+                        }
+                    }
+                    Text(
+                        """
+                        クラウドのプロバイダを使っている場合、そのウィンドウに見えている文字が\
+                        プロバイダに送られます。API キーらしい文字列は伏せ字にしますが、\
+                        他人が書いた文章は送られます。パスワードマネージャなど一部のアプリは、\
+                        この設定に関わらず読み取りません。
+                        """
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+            }
+
             Section("プロバイダ") {
                 Picker("プロバイダ", selection: $environment.settings.llmProvider) {
                     ForEach(LLMProviderID.allCases, id: \.self) { id in
@@ -171,6 +213,16 @@ struct FormattingSettingsView: View {
     }
 
     // MARK: - Bindings
+
+    /// Not a plain `$settings.screenContextEnabled`: switching it on is what asks
+    /// for the screen-recording permission, so it has to go through the
+    /// environment rather than straight into the settings store.
+    private var screenContextBinding: Binding<Bool> {
+        Binding(
+            get: { environment.settings.screenContextEnabled },
+            set: { environment.setScreenContextEnabled($0) }
+        )
+    }
 
     private var modelBinding: Binding<String> {
         Binding(
