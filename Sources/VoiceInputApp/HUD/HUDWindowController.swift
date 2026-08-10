@@ -234,6 +234,7 @@ private struct HUDHostView: View {
                 partialText: coordinator.partialText,
                 level: coordinator.inputLevel,
                 frontmostAppName: environment.frontmostAppName,
+                rawTranscriptCopied: coordinator.rawTranscriptSalvaged,
                 styles: styleOptions,
                 selectedStyleID: coordinator.effectiveStyleID,
                 onSelectStyle: { environment.selectStyle($0) },

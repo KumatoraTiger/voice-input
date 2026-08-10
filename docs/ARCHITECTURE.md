@@ -109,6 +109,12 @@ stateDiagram-v2
 - `failed(VoiceInputError)` carries a typed error with a Japanese description and,
   where actionable, a recovery suggestion (open the right Privacy pane, open
   Settings to enter a key).
+- A formatting failure does not cost the user their dictation. When the `.format`
+  action throws after a transcript exists, the coordinator delivers the raw
+  transcript the way formatting-off would have — copied to the clipboard, and
+  pasted too when auto-paste is on — records it in the history, and sets
+  `rawTranscriptSalvaged` so the HUD and the menu can say the text was kept.
+  This is `.format` only: a failed question has no answer to substitute.
 - Cancel is always available: it tears down the session, discards audio and text,
   and returns to `idle` without producing output.
 - `preparing` cannot last forever. Opening an engine session probes the OS speech

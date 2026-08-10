@@ -85,7 +85,10 @@ struct MenuContent: View {
         case .idle:
             return "待機中 — \(environment.hotkeyLabel) で開始"
         case .failed(let error):
-            return "エラー: \((error.errorDescription ?? "失敗しました").truncated(to: 60))"
+            let line = "エラー: \((error.errorDescription ?? "失敗しました").truncated(to: 60))"
+            return environment.coordinator.rawTranscriptSalvaged
+                ? line + "（文字起こしはコピー済み）"
+                : line
         case .finished:
             return mode == .ask
                 ? "完了 — 回答をクリップボードにコピーしました"

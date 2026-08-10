@@ -621,7 +621,7 @@ struct DictationCoordinatorTests {
 
     // MARK: Failures
 
-    @Test("a missing API key surfaces as .failed(.missingAPIKey)")
+    @Test("a missing API key surfaces as .failed(.missingAPIKey), with the raw transcript salvaged")
     func missingAPIKey() async throws {
         let harness = makeHarness(apiKey: nil)
         let coordinator = harness.coordinator
@@ -632,8 +632,9 @@ struct DictationCoordinatorTests {
         await coordinator.waitUntilIdle()
 
         #expect(coordinator.state == .failed(.missingAPIKey(.openAI)))
-        #expect(harness.output.copiedTexts.isEmpty)
-        #expect(coordinator.history.isEmpty)
+        #expect(harness.output.copiedTexts == ["えーっと 生の書き起こし"])
+        #expect(coordinator.rawTranscriptSalvaged)
+        #expect(coordinator.history.first?.formattedText == "えーっと 生の書き起こし")
         #expect(harness.feedback.events.contains(.failed))
     }
 
@@ -680,7 +681,7 @@ struct DictationCoordinatorTests {
         }
     }
 
-    @Test("a provider error is wrapped and does not copy anything")
+    @Test("a provider error fails the run but copies the raw transcript")
     func providerFailure() async throws {
         let harness = makeHarness(
             llmError: .providerHTTPError(provider: "OpenAI", status: 500, body: "boom")
@@ -696,7 +697,73 @@ struct DictationCoordinatorTests {
             coordinator.state
                 == .failed(.providerHTTPError(provider: "OpenAI", status: 500, body: "boom"))
         )
+        // The dictation itself is not lost: the raw transcript is on the
+        // clipboard, in the history, and flagged so the UI can say so.
+        #expect(harness.output.copiedTexts == ["えーっと 生の書き起こし"])
+        #expect(harness.output.pastedTexts.isEmpty)
+        #expect(coordinator.rawTranscriptSalvaged)
+        #expect(coordinator.history.count == 1)
+        #expect(coordinator.history.first?.summary == "整形に失敗・原文をコピー")
+        #expect(harness.feedback.events.contains(.failed))
+    }
+
+    @Test("with auto-paste on, the salvaged transcript is pasted as well")
+    func salvagePastesWhenAutoPasteEnabled() async throws {
+        var settings = AppSettings()
+        settings.autoPasteEnabled = true
+        let harness = makeHarness(
+            settings: settings,
+            llmError: .providerHTTPError(provider: "OpenAI", status: 500, body: "boom")
+        )
+        let coordinator = harness.coordinator
+
+        coordinator.start()
+        await coordinator.waitUntilIdle()
+        coordinator.stopAndProcess()
+        await coordinator.waitUntilIdle()
+
+        #expect(harness.output.copiedTexts == ["えーっと 生の書き起こし"])
+        #expect(harness.output.pastedTexts == ["えーっと 生の書き起こし"])
+        #expect(coordinator.rawTranscriptSalvaged)
+    }
+
+    @Test("a failed question does not copy the transcript as a substitute answer")
+    func askFailureDoesNotSalvage() async throws {
+        let harness = makeHarness(
+            llmError: .providerHTTPError(provider: "OpenAI", status: 500, body: "boom")
+        )
+        let coordinator = harness.coordinator
+
+        coordinator.start(action: .ask)
+        await coordinator.waitUntilIdle()
+        coordinator.stopAndProcess()
+        await coordinator.waitUntilIdle()
+
+        guard case .failed = coordinator.state else {
+            Issue.record("expected .failed, got \(coordinator.state)")
+            return
+        }
         #expect(harness.output.copiedTexts.isEmpty)
+        #expect(!coordinator.rawTranscriptSalvaged)
+        #expect(coordinator.history.isEmpty)
+    }
+
+    @Test("the salvage flag is cleared when the next dictation starts")
+    func salvageFlagResets() async throws {
+        let harness = makeHarness(
+            llmError: .providerHTTPError(provider: "OpenAI", status: 500, body: "boom")
+        )
+        let coordinator = harness.coordinator
+
+        coordinator.start()
+        await coordinator.waitUntilIdle()
+        coordinator.stopAndProcess()
+        await coordinator.waitUntilIdle()
+        #expect(coordinator.rawTranscriptSalvaged)
+
+        coordinator.start()
+        await coordinator.waitUntilIdle()
+        #expect(!coordinator.rawTranscriptSalvaged)
     }
 
     @Test("a non-VoiceInputError is wrapped rather than escaping")

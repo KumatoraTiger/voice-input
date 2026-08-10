@@ -28,6 +28,9 @@ struct RecordingHUD: View {
     var partialText: String = ""
     var level: Float = 0
     var frontmostAppName: String?
+    /// Whether a formatting failure still put the raw transcript on the
+    /// clipboard, so the failure view can say the dictation was not lost.
+    var rawTranscriptCopied: Bool = false
     /// Styles to offer while recording. Empty hides the row entirely — which is
     /// what happens when formatting is off, or there is only one style.
     var styles: [HUDStyleOption] = []
@@ -198,6 +201,12 @@ struct RecordingHUD: View {
                 .fixedSize(horizontal: false, vertical: true)
             if let suggestion = error.recoverySuggestion {
                 Text(suggestion)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if rawTranscriptCopied {
+                Text("文字起こしをそのままクリップボードにコピーしました。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

@@ -32,6 +32,11 @@ public final class DictationCoordinator {
     /// 「整形中…」 for a question; the state machine itself is the same either way.
     public private(set) var currentAction: VoiceActionID = .format
 
+    /// True while `.failed` is showing a formatting failure whose transcript was
+    /// still put on the clipboard. The UI reads it to tell the user the dictation
+    /// was not lost. Reset when the next dictation starts.
+    public private(set) var rawTranscriptSalvaged = false
+
     /// Assigning persists through the injected `SettingsStore`.
     public var settings: AppSettings {
         get { storedSettings }
@@ -152,6 +157,7 @@ public final class DictationCoordinator {
         styleOverrideID = settings.style(withID: styleID)?.id
         partialText = ""
         inputLevel = 0
+        rawTranscriptSalvaged = false
         state = .preparing
 
         startTask = Task { [weak self] in
@@ -220,6 +226,7 @@ public final class DictationCoordinator {
         inputLevel = 0
         styleOverrideID = nil
         screenContextTask = nil
+        rawTranscriptSalvaged = false
         state = .idle
         notify(.cancelled)
     }
@@ -334,10 +341,25 @@ public final class DictationCoordinator {
             }
             if action.requiresLLM { state = .formatting }
 
-            let outcome = try await action.run(
-                transcript: transcript,
-                context: await makeContext(for: action)
-            )
+            let outcome: ActionOutcome
+            do {
+                outcome = try await action.run(
+                    transcript: transcript,
+                    context: await makeContext(for: action)
+                )
+            } catch {
+                // A formatting failure must not cost the user their dictation:
+                // the transcript is already usable text, so it is delivered raw
+                // before the error is surfaced. Only `.format` — for a question,
+                // the transcript is the question, not a substitute for the
+                // missing answer. A cancel is the user discarding the run, so
+                // nothing is delivered then.
+                if actionID == .format, VoiceInputError.wrapping(error) != .cancelled {
+                    await salvageRawTranscript(transcript)
+                }
+                handle(error)
+                return
+            }
 
             if outcome.copyToClipboard {
                 try output.copy(outcome.text)
@@ -474,6 +496,38 @@ public final class DictationCoordinator {
         if history.count > settings.historyLimit {
             history.removeLast(history.count - settings.historyLimit)
         }
+    }
+
+    /// Copies (and, when auto-paste is on, pastes) the raw transcript after a
+    /// formatting failure, and records it in the history like any other result —
+    /// the same delivery the transcript would have had with formatting off.
+    private func salvageRawTranscript(_ transcript: Transcript) async {
+        let raw = transcript.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty, (try? output.copy(raw)) != nil else { return }
+
+        let pasted: Bool
+        if settings.autoPasteEnabled, output.canPaste {
+            pasted = (try? await output.paste(raw)) != nil
+        } else {
+            pasted = false
+        }
+
+        Self.log.notice(
+            """
+            raw transcript salvaged: chars=\(raw.count, privacy: .public) \
+            pasted=\(pasted, privacy: .public)
+            """
+        )
+        record(
+            transcript: transcript,
+            outcome: ActionOutcome(
+                text: raw,
+                copyToClipboard: true,
+                pasteIntoFrontmostApp: pasted,
+                summary: "整形に失敗・原文をコピー"
+            )
+        )
+        rawTranscriptSalvaged = true
     }
 
     private func handle(_ error: Error) {
