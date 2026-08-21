@@ -8,18 +8,23 @@ public enum HotkeyPurpose: Hashable, Sendable {
     case ask
     /// Dictate with one specific formatting style, for this dictation only.
     case style(UUID)
+    /// Read the current selection aloud. The one purpose that starts no recording
+    /// at all — see `NarrationCoordinator`.
+    case readAloud
 
     public var styleID: UUID? {
         guard case .style(let id) = self else { return nil }
         return id
     }
 
-    /// The action a press starts. Keeps the mapping in Core, so the app layer does
-    /// not get to invent one.
-    public var actionID: VoiceActionID {
+    /// The dictation action a press starts, or `nil` for a purpose that is not a
+    /// dictation at all. Keeps the mapping in Core, so the app layer does not get
+    /// to invent one.
+    public var actionID: VoiceActionID? {
         switch self {
         case .dictation, .style: return .format
         case .ask: return .ask
+        case .readAloud: return nil
         }
     }
 
@@ -31,6 +36,7 @@ public enum HotkeyPurpose: Hashable, Sendable {
         case .dictation: return "dictation"
         case .ask: return "ask"
         case .style: return "style"
+        case .readAloud: return "readAloud"
         }
     }
 }
@@ -89,20 +95,24 @@ public struct HotkeyPlan: Sendable, Equatable {
     /// Why the question shortcut was left unregistered, when one is configured.
     /// Separate from `rejections` because it is not owned by a style.
     public var askRejection: HotkeyRejection?
+    /// Why the read-aloud shortcut was left unregistered, when one is configured.
+    public var readAloudRejection: HotkeyRejection?
 
     public init(
         assignments: [HotkeyAssignment],
         rejections: [UUID: HotkeyRejection],
-        askRejection: HotkeyRejection? = nil
+        askRejection: HotkeyRejection? = nil,
+        readAloudRejection: HotkeyRejection? = nil
     ) {
         self.assignments = assignments
         self.rejections = rejections
         self.askRejection = askRejection
+        self.readAloudRejection = readAloudRejection
     }
 
-    /// The main shortcut always wins: the question shortcut is considered next, then
-    /// styles in the order they appear in Settings, and the first claim on a
-    /// combination keeps it.
+    /// The main shortcut always wins: the question shortcut is considered next,
+    /// then read-aloud, then styles in the order they appear in Settings, and the
+    /// first claim on a combination keeps it.
     public static func make(for settings: AppSettings) -> HotkeyPlan {
         var assignments = [
             HotkeyAssignment(
@@ -114,6 +124,7 @@ public struct HotkeyPlan: Sendable, Equatable {
         var claimed: Set<HotkeyBinding> = [settings.hotkey]
         var rejections: [UUID: HotkeyRejection] = [:]
         var askRejection: HotkeyRejection?
+        var readAloudRejection: HotkeyRejection?
 
         if let binding = settings.askHotkey {
             // Same rule as a style, for the same reason: the modifier-only path
@@ -129,6 +140,27 @@ public struct HotkeyPlan: Sendable, Equatable {
                         purpose: .ask,
                         binding: binding,
                         mode: settings.hotkeyMode
+                    )
+                )
+            }
+        }
+
+        if let binding = settings.readAloudHotkey {
+            // Modifier-only stays reserved for the main dictation shortcut, and a
+            // combination already claimed is a configuration mistake the user has
+            // to see rather than an `OSStatus` to swallow.
+            if binding.isModifierOnly {
+                readAloudRejection = .modifierOnlyUnsupported
+            } else if !claimed.insert(binding).inserted {
+                readAloudRejection = .duplicate(binding)
+            } else {
+                assignments.append(
+                    HotkeyAssignment(
+                        purpose: .readAloud,
+                        binding: binding,
+                        // Holding a key to keep reading makes no sense: a reading
+                        // outlives the press by design.
+                        mode: .toggle
                     )
                 )
             }
@@ -156,7 +188,8 @@ public struct HotkeyPlan: Sendable, Equatable {
         return HotkeyPlan(
             assignments: assignments,
             rejections: rejections,
-            askRejection: askRejection
+            askRejection: askRejection,
+            readAloudRejection: readAloudRejection
         )
     }
 }

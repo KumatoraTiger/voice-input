@@ -17,6 +17,8 @@ enum PromptFence {
         (FormattingPromptBuilder.screenOpeningTag, "[screen_text]"),
         (AskPromptBuilder.closingTag, "[/question]"),
         (AskPromptBuilder.openingTag, "[question]"),
+        (ReadAloudPromptBuilder.closingTag, "[/source_text]"),
+        (ReadAloudPromptBuilder.openingTag, "[source_text]"),
     ]
 
     static func neutralize(_ text: String) -> String {

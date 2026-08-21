@@ -15,6 +15,8 @@ struct SettingsRootView: View {
                 .settingsTabItem(.formatting)
             AskSettingsView()
                 .settingsTabItem(.ask)
+            ReadAloudSettingsView()
+                .settingsTabItem(.readAloud)
             APIKeysSettingsView()
                 .settingsTabItem(.apiKeys)
             PermissionsSettingsView()

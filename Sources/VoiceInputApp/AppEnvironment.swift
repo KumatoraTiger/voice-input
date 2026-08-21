@@ -15,6 +15,7 @@ enum SettingsTab: String, CaseIterable, Identifiable, Hashable {
     case transcription
     case formatting
     case ask
+    case readAloud
     case apiKeys
     case permissions
 
@@ -26,6 +27,7 @@ enum SettingsTab: String, CaseIterable, Identifiable, Hashable {
         case .transcription: return "音声認識"
         case .formatting: return "整形"
         case .ask: return "質問"
+        case .readAloud: return "読み上げ"
         case .apiKeys: return "API キー"
         case .permissions: return "権限"
         }
@@ -37,6 +39,7 @@ enum SettingsTab: String, CaseIterable, Identifiable, Hashable {
         case .transcription: return "waveform"
         case .formatting: return "text.badge.checkmark"
         case .ask: return "questionmark.bubble"
+        case .readAloud: return "speaker.wave.2"
         case .apiKeys: return "key"
         case .permissions: return "lock.shield"
         }
@@ -59,6 +62,9 @@ final class AppEnvironment {
     // MARK: Dependencies
 
     let coordinator: DictationCoordinator
+    /// The read-aloud pipeline. Independent of `coordinator`: it starts at a
+    /// selection, not at the microphone, and the two never run through each other.
+    let narration: NarrationCoordinator
     let permissions: PermissionsService
     let engines: any TranscriptionEngineResolving
     let providers: LLMProviderRegistry
@@ -80,6 +86,8 @@ final class AppEnvironment {
     var styleHotkeyIssues: [UUID: String] = [:]
     /// Non-nil while the configured question shortcut could not be claimed.
     var askHotkeyIssue: String?
+    /// Non-nil while the configured read-aloud shortcut could not be claimed.
+    var readAloudHotkeyIssue: String?
     /// Non-nil when launch-at-login needs the user to do something.
     var loginItemNotice: String?
     /// The app that was frontmost when recording started, e.g. "Slack".
@@ -89,6 +97,9 @@ final class AppEnvironment {
     // MARK: Private
 
     @ObservationIgnored private let sound: SoundFeedback
+    /// Held so the voice and language can be re-pointed when Settings changes,
+    /// without rebuilding the coordinator that drives it.
+    @ObservationIgnored private let speech: SystemSpeechSynthesizer
     @ObservationIgnored private let hotkeys = HotkeyMonitor()
     @ObservationIgnored private var hudStorage: HUDWindowController?
     @ObservationIgnored private var welcomeWindow: WelcomeWindowController?
@@ -99,20 +110,24 @@ final class AppEnvironment {
 
     init(
         coordinator: DictationCoordinator,
+        narration: NarrationCoordinator,
         permissions: PermissionsService,
         engines: any TranscriptionEngineResolving,
         providers: LLMProviderRegistry,
         secrets: any SecretStore,
         output: any OutputSink,
-        sound: SoundFeedback
+        sound: SoundFeedback,
+        speech: SystemSpeechSynthesizer
     ) {
         self.coordinator = coordinator
+        self.narration = narration
         self.permissions = permissions
         self.engines = engines
         self.providers = providers
         self.secrets = secrets
         self.output = output
         self.sound = sound
+        self.speech = speech
         self.engineAvailability = EngineAvailabilityModel(engines: engines)
         self.apiKeys = APIKeysModel(secrets: secrets, providers: providers)
         self.formattingTrial = FormattingTrialModel(providers: providers, secrets: secrets)
@@ -150,14 +165,31 @@ final class AppEnvironment {
             output: output,
             feedback: sound
         )
+        let settings = coordinator.settings
+        let speech = SystemSpeechSynthesizer(
+            localeIdentifier: settings.localeIdentifier,
+            voiceIdentifier: settings.readAloudSettings.voiceIdentifier
+        )
+        // The settings are read through the coordinator rather than copied, so a
+        // rate or voice edited in Settings applies to the next reading and there is
+        // still exactly one writer to the store.
+        let narration = NarrationCoordinator(
+            source: SelectedTextReader(),
+            synthesizer: speech,
+            providers: providers,
+            secrets: secrets,
+            settings: { coordinator.settings }
+        )
         return AppEnvironment(
             coordinator: coordinator,
+            narration: narration,
             permissions: PermissionsService(),
             engines: engines,
             providers: providers,
             secrets: secrets,
             output: output,
-            sound: sound
+            sound: sound,
+            speech: speech
         )
     }
 
@@ -224,6 +256,23 @@ final class AppEnvironment {
         coordinator.toggle(action: .ask)
     }
 
+    /// Reads the current selection aloud, or controls the reading in flight: the
+    /// same press pauses, resumes, and cancels a reading that has not started
+    /// speaking yet. See `NarrationCoordinator.toggle`.
+    func toggleReadAloud() {
+        narration.toggle()
+    }
+
+    func stopReadAloud() {
+        narration.stop()
+    }
+
+    /// `nil` when no read-aloud shortcut is configured — the feature is opt-in, and
+    /// the menu says so rather than showing an empty key.
+    var readAloudHotkeyLabel: String? {
+        settings.readAloudHotkey.map(HotkeyFormatting.displayString(for:))
+    }
+
     /// Switches the style of the dictation in flight (from the HUD). One-off: the
     /// default style in Settings and the menu is untouched.
     func selectStyle(_ id: UUID) {
@@ -260,6 +309,7 @@ final class AppEnvironment {
             _ = settings.hotkey
             _ = settings.hotkeyMode
             _ = settings.askHotkey
+            _ = settings.readAloud
             // Styles carry shortcuts of their own, so editing one can change what
             // has to be registered. `applyHotkey` compares the resulting plan, so
             // typing a prompt does not churn the registrations.
@@ -276,9 +326,17 @@ final class AppEnvironment {
                 self.applySoundSetting()
                 self.applyLoginItem()
                 self.applyScreenContextProvider()
+                self.applyNarrationVoice()
                 self.observeSettings()
             }
         }
+    }
+
+    /// Re-points the synthesiser when the language or the chosen voice changes. The
+    /// voice is resolved per utterance, so this takes effect from the next chunk.
+    private func applyNarrationVoice() {
+        speech.localeIdentifier = settings.localeIdentifier
+        speech.voiceIdentifier = settings.readAloudSettings.voiceIdentifier
     }
 
     private func applyScreenContextProvider() {
@@ -364,6 +422,12 @@ final class AppEnvironment {
             ?? hotkeys.failures[.ask].map {
                 $0.errorDescription ?? "ショートカットキーを登録できませんでした。"
             }
+
+        readAloudHotkeyIssue =
+            plan.readAloudRejection?.message(subject: "読み上げのショートカット")
+            ?? hotkeys.failures[.readAloud].map {
+                $0.errorDescription ?? "ショートカットキーを登録できませんでした。"
+            }
     }
 
     private func message(for error: HotkeyError, binding: HotkeyBinding) -> String {
@@ -391,26 +455,33 @@ final class AppEnvironment {
         Self.log.notice(
             """
             pressed: purpose=\(purpose.logName, privacy: .public) \
-            action=\(purpose.actionID.rawValue, privacy: .public) \
+            action=\(purpose.actionID?.rawValue ?? "-", privacy: .public) \
             mode=\(self.settings.hotkeyMode.rawValue, privacy: .public)
             """
         )
+        // A purpose with no dictation action is not a recording at all. Read-aloud
+        // is the only one today, and it must not touch the capture path.
+        guard let actionID = purpose.actionID else {
+            narration.toggle()
+            return
+        }
         rememberFrontmostApp()
         switch settings.hotkeyMode {
         case .toggle:
-            coordinator.toggle(action: purpose.actionID, styleID: purpose.styleID)
+            coordinator.toggle(action: actionID, styleID: purpose.styleID)
         case .pushToTalk:
             if coordinator.isCapturing {
-                coordinator.selectAction(purpose.actionID)
+                coordinator.selectAction(actionID)
                 if let styleID = purpose.styleID { coordinator.selectStyle(styleID) }
             } else {
-                coordinator.start(action: purpose.actionID, styleID: purpose.styleID)
+                coordinator.start(action: actionID, styleID: purpose.styleID)
             }
         }
     }
 
     private func handleHotkeyRelease(_ purpose: HotkeyPurpose) {
-        guard settings.hotkeyMode == .pushToTalk else { return }
+        // Read-aloud is registered as a toggle, so a release means nothing to it.
+        guard purpose.actionID != nil, settings.hotkeyMode == .pushToTalk else { return }
         coordinator.stopAndProcess()
     }
 

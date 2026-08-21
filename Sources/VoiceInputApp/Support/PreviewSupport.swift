@@ -48,14 +48,24 @@ extension AppEnvironment {
             output: output,
             feedback: sound
         )
+        let speech = SystemSpeechSynthesizer(localeIdentifier: settings.localeIdentifier)
+        let narration = NarrationCoordinator(
+            source: FakeNarrationSource(),
+            synthesizer: FakeSpeechSynthesizer(),
+            providers: providers,
+            secrets: secretStore,
+            settings: { coordinator.settings }
+        )
         return AppEnvironment(
             coordinator: coordinator,
+            narration: narration,
             permissions: PermissionsService(),
             engines: engines,
             providers: providers,
             secrets: secretStore,
             output: output,
-            sound: sound
+            sound: sound,
+            speech: speech
         )
     }
 }

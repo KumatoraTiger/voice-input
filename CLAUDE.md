@@ -51,6 +51,8 @@ anything.
 | `FeedbackPresenting` | sounds/HUD signals |
 | `TranscriptionEngineResolving` | id → engine lookup, so Core can drive Platform engines |
 | `DictationState` | the state machine the UI renders from |
+| `NarrationSourceReading` | where text to read aloud comes from (selection today) |
+| `SpeechSynthesizing` | a text-to-speech backend |
 
 `DictationCoordinator` (`Sources/VoiceInputCore/Pipeline/`) is the spine. It is
 `@MainActor @Observable`, takes every dependency by injection, and owns the state

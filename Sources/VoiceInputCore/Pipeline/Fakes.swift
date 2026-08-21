@@ -256,3 +256,67 @@ public final class FakeScreenContextProvider: ScreenContextProviding, @unchecked
         return context
     }
 }
+
+// MARK: - Narration
+
+/// A source that hands back a scripted selection.
+@MainActor
+public final class FakeNarrationSource: NarrationSourceReading {
+    public var text: String
+    /// When set, `read()` throws instead of returning `text`.
+    public var error: VoiceInputError?
+    public private(set) var readCount = 0
+
+    public init(text: String = "選択されたテキスト。", error: VoiceInputError? = nil) {
+        self.text = text
+        self.error = error
+    }
+
+    public func read() async throws -> String {
+        readCount += 1
+        if let error { throw error }
+        return text
+    }
+}
+
+/// A synthesiser that records what it was asked to say instead of speaking it.
+///
+/// Playback is simulated rather than timed: `finishQueue()` is what stands in for
+/// the system telling us the queue drained, so a test controls that moment exactly.
+@MainActor
+public final class FakeSpeechSynthesizer: SpeechSynthesizing {
+    public private(set) var spoken: [String] = []
+    public private(set) var rates: [Double] = []
+    public private(set) var stopCount = 0
+    public private(set) var isSpeaking = false
+    public private(set) var isPaused = false
+    public var onQueueDrained: (@MainActor () -> Void)?
+
+    public init() {}
+
+    public func enqueue(_ text: String, rate: Double) {
+        spoken.append(text)
+        rates.append(rate)
+        isSpeaking = true
+    }
+
+    public func pause() {
+        isPaused = true
+    }
+
+    public func resume() {
+        isPaused = false
+    }
+
+    public func stop() {
+        stopCount += 1
+        isSpeaking = false
+        isPaused = false
+    }
+
+    /// Simulates the system finishing everything queued so far.
+    public func finishQueue() {
+        isSpeaking = false
+        onQueueDrained?()
+    }
+}

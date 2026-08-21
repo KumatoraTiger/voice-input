@@ -229,6 +229,46 @@ filtering did not correct anything; `docs/SECURITY.md` records the measurements 
 what the reversal costs. Core owns the truncation, fencing and inspection as pure
 functions; Platform owns only the capture.
 
+### 読み上げ: a second pipeline that starts at a selection
+
+Everything above starts at the microphone. Reading text aloud starts at a
+selection, so it gets its own coordinator rather than a `VoiceAction`:
+
+```mermaid
+flowchart LR
+    HK["Hotkey<br/>HotkeyPurpose.readAloud"] --> NC
+    SRC["SelectedTextReader<br/>⌘C + NSPasteboard"] --> NC
+    NC["NarrationCoordinator<br/>@MainActor @Observable"] --> CH["NarrationChunker"]
+    CH --> PB["ReadAloudPromptBuilder"]
+    PB --> LLM["LLMProviderRegistry"]
+    LLM --> NC
+    NC --> TTS["SystemSpeechSynthesizer<br/>AVSpeechSynthesizer"]
+```
+
+Three things are worth knowing before changing it.
+
+**It shares the contracts and none of the states.** `LLMProvider`, `SecretStore`
+and `AppSettings` are the same objects the dictation path uses;
+`DictationCoordinator`'s states are all about capturing audio, so `NarrationState`
+is its own small machine (`idle → preparing → speaking ⇄ paused`). The two
+coordinators never call each other, and reading aloud never touches the microphone.
+
+**Chunking is what makes it feel instant.** `NarrationChunker` cuts the text at the
+strongest boundary available — a blank line, then a sentence end, then by length —
+and the coordinator rewrites and enqueues one chunk at a time. So playback begins
+after one LLM call on a paragraph rather than one on the whole article, and the
+remaining chunks are rewritten while the first is already audible. `isProducing`
+exists because of that overlap: without it, the gap between chunk 1 draining and
+chunk 2 arriving would look like the end of the reading.
+
+**A failed rewrite still reads.** No API key, rewriting turned off, or a provider
+error all fall back to speaking the source text as it stands. This mirrors the
+dictation path, where a failed formatting call still delivers the transcript.
+
+Adding another source (OCR of the frontmost window, a URL) means another
+`NarrationSourceReading` in Platform and nothing else — the seam is deliberately
+that narrow.
+
 ## Threading and actor rules
 
 - **`DictationCoordinator` is `@MainActor`.** All state mutation and all SwiftUI

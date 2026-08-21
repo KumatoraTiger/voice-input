@@ -102,6 +102,38 @@ public struct ScreenContextSettings: Codable, Sendable, Equatable {
     }
 }
 
+/// Settings for reading text out loud (選択テキストの読み上げ).
+///
+/// A struct, and `Optional` on `AppSettings`, for the same two reasons as
+/// `ScreenContextSettings`: the feature can grow knobs without adding top-level
+/// keys, and settings written before it existed still decode.
+public struct ReadAloudSettings: Codable, Sendable, Equatable {
+    /// Shortcut that reads the current selection aloud. `nil` and without a
+    /// default, like `askHotkey`: an update must never claim a combination the
+    /// user relies on.
+    public var hotkey: HotkeyBinding?
+    /// Speaking pace. 0 slowest, 1 fastest, 0.5 the system's normal pace.
+    public var rate: Double
+    /// Run the text through the LLM before speaking it. Off means the source text
+    /// is spoken as it stands, symbols and code fences included.
+    public var rewriteEnabled: Bool
+    /// System voice identifier, or `nil` to let the platform pick the best voice
+    /// installed for the dictation locale.
+    public var voiceIdentifier: String?
+
+    public init(
+        hotkey: HotkeyBinding? = nil,
+        rate: Double = 0.5,
+        rewriteEnabled: Bool = true,
+        voiceIdentifier: String? = nil
+    ) {
+        self.hotkey = hotkey
+        self.rate = rate
+        self.rewriteEnabled = rewriteEnabled
+        self.voiceIdentifier = voiceIdentifier
+    }
+}
+
 /// Everything persisted for the user. **Never contains secrets** — API keys live in
 /// the Keychain via `SecretStore`. This type is safe to log, export, and diff.
 public struct AppSettings: Codable, Sendable, Equatable {
@@ -136,6 +168,11 @@ public struct AppSettings: Codable, Sendable, Equatable {
     public var askModels: [LLMProviderID: String]
     public var askAnswerStyle: AskAnswerStyle
 
+    // MARK: Read aloud
+    /// `nil` means the user has never touched the feature, which reads as off:
+    /// no shortcut is registered until one is set.
+    public var readAloud: ReadAloudSettings?
+
     // MARK: Screen context
     /// `nil` means the user has never touched the feature, which reads as off.
     ///
@@ -168,6 +205,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
         askHotkey: HotkeyBinding? = nil,
         askModels: [LLMProviderID: String] = [:],
         askAnswerStyle: AskAnswerStyle = .concise,
+        readAloud: ReadAloudSettings? = nil,
         screenContext: ScreenContextSettings? = nil,
         autoPasteEnabled: Bool = false,
         playSounds: Bool = true,
@@ -188,6 +226,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
         self.askHotkey = askHotkey
         self.askModels = askModels
         self.askAnswerStyle = askAnswerStyle
+        self.readAloud = readAloud
         self.screenContext = screenContext
         self.autoPasteEnabled = autoPasteEnabled
         self.playSounds = playSounds
@@ -207,6 +246,24 @@ public struct AppSettings: Codable, Sendable, Equatable {
             var value = screenContext ?? ScreenContextSettings()
             value.isEnabled = newValue
             screenContext = value
+        }
+    }
+
+    /// Non-optional view of `readAloud`, so call sites never spell the migration
+    /// detail. Assigning any of these creates the struct on first use.
+    public var readAloudSettings: ReadAloudSettings {
+        get { readAloud ?? ReadAloudSettings() }
+        set { readAloud = newValue }
+    }
+
+    /// The shortcut that reads the selection aloud, or `nil` while the feature is
+    /// unconfigured.
+    public var readAloudHotkey: HotkeyBinding? {
+        get { readAloud?.hotkey }
+        set {
+            var value = readAloudSettings
+            value.hotkey = newValue
+            readAloud = value
         }
     }
 
@@ -274,6 +331,7 @@ extension AppSettings {
             askHotkey: try container.decodeIfPresent(HotkeyBinding.self, forKey: .askHotkey),
             askModels: try decode(.askModels, or: fallback.askModels),
             askAnswerStyle: try decode(.askAnswerStyle, or: fallback.askAnswerStyle),
+            readAloud: try container.decodeIfPresent(ReadAloudSettings.self, forKey: .readAloud),
             screenContext: try container.decodeIfPresent(
                 ScreenContextSettings.self,
                 forKey: .screenContext

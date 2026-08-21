@@ -21,6 +21,11 @@ public enum VoiceInputError: Error, Sendable, Equatable {
     /// for providers that put the model in the URL path (Gemini).
     case invalidModelName(provider: String, model: String)
     case networkFailure(String)
+    /// Read-aloud was asked for with nothing selected (or with a selection the
+    /// frontmost app refused to hand over).
+    case nothingToRead
+    /// No usable system voice for the configured language.
+    case speechVoiceUnavailable(String)
     /// The engine did not become ready in time — typically a wedged speech
     /// daemon whose XPC calls never return. Retrying opens a fresh connection.
     case preparationTimedOut
@@ -51,6 +56,8 @@ extension VoiceInputError {
         case .providerDecodingFailed(let provider, _): return "providerDecodingFailed(\(provider))"
         case .invalidModelName(let provider, _): return "invalidModelName(\(provider))"
         case .networkFailure: return "networkFailure"
+        case .nothingToRead: return "nothingToRead"
+        case .speechVoiceUnavailable: return "speechVoiceUnavailable"
         case .preparationTimedOut: return "preparationTimedOut"
         case .cancelled: return "cancelled"
         }
@@ -88,6 +95,10 @@ extension VoiceInputError: LocalizedError {
             return "\(provider) のモデル名が不正です: \(model)"
         case .networkFailure(let detail):
             return "ネットワークエラー: \(detail)"
+        case .nothingToRead:
+            return "読み上げるテキストが選択されていません。"
+        case .speechVoiceUnavailable(let language):
+            return "\(language) の音声が見つかりませんでした。"
         case .preparationTimedOut:
             return "音声認識エンジンの準備がタイムアウトしました。"
         case .cancelled:
@@ -108,6 +119,10 @@ extension VoiceInputError: LocalizedError {
             return "もう一度質問するか、設定 → 質問 で別のモデルを試してください。"
         case .invalidModelName:
             return "設定 → 整形 でモデル名を確認してください。空欄にすると既定のモデルを使います。"
+        case .nothingToRead:
+            return "読み上げたい範囲を選択してから、もう一度ショートカットを押してください。"
+        case .speechVoiceUnavailable:
+            return "システム設定 → アクセシビリティ → 読み上げコンテンツ → システムの声 から音声を追加してください。"
         case .preparationTimedOut:
             return "もう一度お試しください。改善しない場合は VoiceInput を再起動してください。"
         default:

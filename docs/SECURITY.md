@@ -57,6 +57,13 @@ What is sent, precisely:
   feature narrows spellings in a dictation, and a question is not a dictation. The
   answer comes back, is shown in the HUD and placed on the clipboard, and is not sent
   anywhere else.
+- **Reading text aloud** (the 読み上げ shortcut, off until you bind a key): the
+  read-aloud system prompt, the locale, and the selected text as a user message,
+  split into chunks of about 1200 characters — so a long selection is several
+  requests to the same endpoint. Same provider and model as formatting. The
+  **speech itself never leaves the machine**: `AVSpeechSynthesizer` uses the voices
+  macOS has installed, so no audio is generated or sent anywhere. Turn 「LLM で
+  読み上げ向けに整える」 off and the feature makes no network request at all.
 - **Nothing at all** is sent to any endpoint the user did not select. The app has no
   analytics, no crash reporter, no update check, and no first-party server.
 
@@ -172,6 +179,27 @@ Where the licence stops, and why it is still safe to give:
   a screenshot, even with 画面コンテキスト enabled and the permission granted. The
   feature narrows spellings in a dictation; a question has nothing to do with what is
   on screen, and capturing it anyway would be a screen read with no purpose.
+
+### The text you select is the least trusted input in the app
+
+A dictation is at least something the user said. A selection is not: it is an
+agent's answer, a web page, a chat log someone else wrote. Read-aloud therefore
+treats it exactly the way the transcript is treated, and for a stronger reason.
+
+- The selection travels in a **user** message, fenced in `<source_text>` tags, and
+  the system prompt states that everything inside is data to be rewritten and never
+  an instruction to follow. Every fence the app uses is neutralised inside it
+  (`PromptFence`), so a page containing `</source_text>` cannot close the fence
+  early.
+- The rewritten text is **only ever spoken**. It is not put on the clipboard, not
+  pasted, not written to disk, and it cannot select a model, a provider or a
+  destination. The worst a malicious page can do is get itself read aloud oddly.
+- Reading the selection uses a synthesised **⌘C**, and the previous clipboard
+  contents are **restored** afterwards. This differs from auto-paste, which
+  deliberately leaves its text on the clipboard: there, something downstream is
+  about to read the pasteboard, and a restore would race it. Here nothing is, so the
+  clipboard the user was carrying survives.
+- Nothing about a reading is kept: no audio file, no transcript, no history entry.
 
 ## 画面コンテキスト: sending the screen's text, and what that costs
 
@@ -291,13 +319,14 @@ words that land on the clipboard; it cannot do anything else.
 |---|---|---|
 | Microphone | always | to record you |
 | Speech Recognition | Apple engines only | `SFSpeechRecognizer` / `SpeechAnalyzer` |
-| Accessibility | 自動ペースト, or a modifier-only hotkey | synthesize ⌘V into the frontmost app; observe modifier keys globally |
+| Accessibility | 自動ペースト, 読み上げ, or a modifier-only hotkey | synthesize ⌘V (paste) or ⌘C (read the selection) into the frontmost app; observe modifier keys globally |
 | Screen Recording | 画面コンテキスト only (off by default) | read the frontmost window's text so the LLM can fix misrecognised names; that text is sent to the configured provider |
 
 Accessibility and Screen Recording are the powerful ones, and they are the only
 permissions that touch other applications. Neither is requested at first launch —
-Accessibility is asked for when you turn on auto-paste or bind the hotkey to
-modifiers alone (⇧⌃), and Screen Recording only when you switch 画面コンテキスト on.
+Accessibility is asked for when you turn on auto-paste, bind a read-aloud shortcut,
+or bind the hotkey to modifiers alone (⇧⌃), and Screen Recording only when you
+switch 画面コンテキスト on.
 Revoking either in System Settings disables exactly the feature that asked for it
 and nothing else.
 

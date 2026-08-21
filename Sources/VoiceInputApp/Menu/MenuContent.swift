@@ -29,11 +29,22 @@ struct MenuContent: View {
             Button("キャンセル") { environment.coordinator.cancel() }
         }
 
+        Button(readAloudTitle) {
+            environment.toggleReadAloud()
+        }
+
+        if environment.narration.state.isActive {
+            Button("読み上げを停止") { environment.stopReadAloud() }
+        }
+
         if let hotkeyError = environment.hotkeyError {
             Text(hotkeyError.truncated(to: 80))
         }
         if let askIssue = environment.askHotkeyIssue {
             Text("質問: \(askIssue.truncated(to: 70))")
+        }
+        if let readAloudIssue = environment.readAloudHotkeyIssue {
+            Text("読み上げ: \(readAloudIssue.truncated(to: 70))")
         }
 
         Divider()
@@ -124,6 +135,24 @@ struct MenuContent: View {
             return mode == .ask ? "質問を送信\(suffix)" : "この録音を質問にする\(suffix)"
         default:
             return "質問する\(suffix)"
+        }
+    }
+
+    /// The read-aloud row. One item for four meanings, because that is what the
+    /// shortcut does — see `NarrationCoordinator.toggle`.
+    private var readAloudTitle: String {
+        let suffix = environment.readAloudHotkeyLabel.map { "（\($0)）" } ?? ""
+        switch environment.narration.state {
+        case .idle:
+            return "選択テキストを読み上げ\(suffix)"
+        case .preparing:
+            return "読み上げを準備中… 中止\(suffix)"
+        case .speaking:
+            return "一時停止\(suffix)"
+        case .paused:
+            return "読み上げを再開\(suffix)"
+        case .failed(let error):
+            return "読み上げ: \((error.errorDescription ?? "失敗しました").truncated(to: 50))"
         }
     }
 
