@@ -63,3 +63,16 @@ credentials.json
 # project names that must not reach this public repository. Deliberately not
 # tracked — committing the list would publish the words it exists to keep out.
 .check-secrets-local
+.mcp.json
+.agentsroom/handoff-transcript-*.txt
+.agentsroom/handoff-summary-*.md
+
+# AgentsRoom's own runtime state and the per-CLI MCP wiring it writes. Not
+# project source: shared by every agent, rewritten on the next launch.
+.agentsroom/
+.agents/
+.grok/
+.vibe/
+.kimi-code/
+.amp/
+.omp/
