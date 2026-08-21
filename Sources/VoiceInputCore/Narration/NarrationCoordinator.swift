@@ -23,10 +23,15 @@ public final class NarrationCoordinator {
     /// reading is otherwise indistinguishable from a stuck one.
     public private(set) var chunkCount = 0
     public private(set) var spokenChunkCount = 0
+    /// Where the reading in flight took its text from. The menu shows it, because
+    /// 「読み上げ中」 is ambiguous once two shortcuts can start one.
+    public private(set) var activeSource: NarrationSourceID = .selection
 
     // MARK: Dependencies
 
-    private let source: any NarrationSourceReading
+    /// One reader per source. Keyed rather than a single injected reader, because
+    /// which one runs is decided by the shortcut the user pressed.
+    private let sources: [NarrationSourceID: any NarrationSourceReading]
     private let synthesizer: any SpeechSynthesizing
     private let providers: LLMProviderRegistry
     private let secrets: any SecretStore
@@ -46,7 +51,7 @@ public final class NarrationCoordinator {
     private static let log = Logger(subsystem: "io.github.voiceinput", category: "narration")
 
     public init(
-        source: any NarrationSourceReading,
+        sources: [NarrationSourceID: any NarrationSourceReading],
         synthesizer: any SpeechSynthesizing,
         providers: LLMProviderRegistry,
         secrets: any SecretStore,
@@ -54,7 +59,7 @@ public final class NarrationCoordinator {
         chunker: NarrationChunker = NarrationChunker(),
         settings: @escaping @MainActor () -> AppSettings
     ) {
-        self.source = source
+        self.sources = sources
         self.synthesizer = synthesizer
         self.providers = providers
         self.secrets = secrets
@@ -71,10 +76,10 @@ public final class NarrationCoordinator {
 
     /// One shortcut, four meanings, in the order a listener expects: start, pause,
     /// resume, and — while the first chunk is still being prepared — cancel.
-    public func toggle() {
+    public func toggle(source: NarrationSourceID = .selection) {
         switch state {
         case .idle, .failed:
-            start()
+            start(source: source)
         case .preparing:
             stop()
         case .speaking:
@@ -84,9 +89,10 @@ public final class NarrationCoordinator {
         }
     }
 
-    public func start() {
+    public func start(source: NarrationSourceID = .selection) {
         guard !state.isActive else { return }
 
+        activeSource = source
         chunkCount = 0
         spokenChunkCount = 0
         state = .preparing
@@ -129,10 +135,12 @@ public final class NarrationCoordinator {
 
     private func run() async {
         let settings = settingsProvider()
+        let sourceID = activeSource
         do {
+            guard let source = sources[sourceID] else { throw sourceID.emptyError }
             let text = try await source.read()
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { throw VoiceInputError.nothingToRead }
+            guard !trimmed.isEmpty else { throw sourceID.emptyError }
             try Task.checkCancellation()
 
             let chunks = chunker.chunks(of: trimmed)
@@ -143,7 +151,8 @@ public final class NarrationCoordinator {
             // read. See `docs/SECURITY.md`.
             Self.log.notice(
                 """
-                start: sourceChars=\(trimmed.count, privacy: .public) \
+                start: source=\(sourceID.logName, privacy: .public) \
+                sourceChars=\(trimmed.count, privacy: .public) \
                 chunks=\(chunks.count, privacy: .public) \
                 rewrite=\(rewriter != nil, privacy: .public)
                 """

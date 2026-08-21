@@ -14,6 +14,31 @@ public protocol NarrationSourceReading {
     func read() async throws -> String
 }
 
+/// Which source a reading takes its text from.
+///
+/// The two differ in what the user has to do, not in what happens afterwards.
+/// `selection` synthesises ⌘C, so it needs the Accessibility permission and only
+/// works when something is highlighted. `clipboard` reads what is already there,
+/// which is what an agent's own copy button leaves behind — press it, then press
+/// the shortcut, and no permission is involved.
+public enum NarrationSourceID: String, Sendable, CaseIterable, Codable {
+    case selection
+    case clipboard
+
+    /// Content-free name, safe to log as `.public`.
+    public var logName: String { rawValue }
+
+    /// What "there was nothing there" means for this source. The two differ in the
+    /// action the user has to take, so they are separate errors rather than one
+    /// message that has to cover both.
+    public var emptyError: VoiceInputError {
+        switch self {
+        case .selection: return .nothingToRead
+        case .clipboard: return .clipboardEmpty
+        }
+    }
+}
+
 /// Speaks text out loud, one queued chunk after another.
 ///
 /// Class-bound and main-actor: every implementation wraps a stateful system

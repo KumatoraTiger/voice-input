@@ -50,7 +50,10 @@ extension AppEnvironment {
         )
         let speech = SystemSpeechSynthesizer(localeIdentifier: settings.localeIdentifier)
         let narration = NarrationCoordinator(
-            source: FakeNarrationSource(),
+            sources: [
+                .selection: FakeNarrationSource(),
+                .clipboard: FakeNarrationSource(),
+            ],
             synthesizer: FakeSpeechSynthesizer(),
             providers: providers,
             secrets: secretStore,

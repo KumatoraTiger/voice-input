@@ -24,6 +24,10 @@ public enum VoiceInputError: Error, Sendable, Equatable {
     /// Read-aloud was asked for with nothing selected (or with a selection the
     /// frontmost app refused to hand over).
     case nothingToRead
+    /// Read-aloud was asked for from the clipboard while the clipboard held no
+    /// text. Distinct from `nothingToRead` because the fix is different: copy
+    /// something, rather than select something.
+    case clipboardEmpty
     /// No usable system voice for the configured language.
     case speechVoiceUnavailable(String)
     /// The engine did not become ready in time — typically a wedged speech
@@ -57,6 +61,7 @@ extension VoiceInputError {
         case .invalidModelName(let provider, _): return "invalidModelName(\(provider))"
         case .networkFailure: return "networkFailure"
         case .nothingToRead: return "nothingToRead"
+        case .clipboardEmpty: return "clipboardEmpty"
         case .speechVoiceUnavailable: return "speechVoiceUnavailable"
         case .preparationTimedOut: return "preparationTimedOut"
         case .cancelled: return "cancelled"
@@ -97,6 +102,8 @@ extension VoiceInputError: LocalizedError {
             return "ネットワークエラー: \(detail)"
         case .nothingToRead:
             return "読み上げるテキストが選択されていません。"
+        case .clipboardEmpty:
+            return "クリップボードに読み上げるテキストがありません。"
         case .speechVoiceUnavailable(let language):
             return "\(language) の音声が見つかりませんでした。"
         case .preparationTimedOut:
@@ -121,6 +128,8 @@ extension VoiceInputError: LocalizedError {
             return "設定 → 整形 でモデル名を確認してください。空欄にすると既定のモデルを使います。"
         case .nothingToRead:
             return "読み上げたい範囲を選択してから、もう一度ショートカットを押してください。"
+        case .clipboardEmpty:
+            return "読み上げたい回答をコピーしてから、もう一度ショートカットを押してください。"
         case .speechVoiceUnavailable:
             return "システム設定 → アクセシビリティ → 読み上げコンテンツ → システムの声 から音声を追加してください。"
         case .preparationTimedOut:

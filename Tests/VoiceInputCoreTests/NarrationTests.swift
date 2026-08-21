@@ -139,16 +139,23 @@ struct ReadAloudPromptBuilderTests {
 @MainActor
 @Suite("Narration coordinator")
 struct NarrationCoordinatorTests {
+    /// Defaults are `nil` and built in the body on purpose: a default *argument*
+    /// is evaluated outside the suite's actor, so `FakeNarrationSource()` there
+    /// fails to compile as a main-actor call from a nonisolated context.
     private func make(
-        source: FakeNarrationSource = FakeNarrationSource(),
-        synthesizer: FakeSpeechSynthesizer = FakeSpeechSynthesizer(),
+        source: FakeNarrationSource? = nil,
+        clipboard: FakeNarrationSource? = nil,
+        synthesizer: FakeSpeechSynthesizer? = nil,
         provider: FakeLLMProvider? = nil,
         secrets: [SecretKey: String] = [:],
         settings: AppSettings = AppSettings()
     ) -> NarrationCoordinator {
         NarrationCoordinator(
-            source: source,
-            synthesizer: synthesizer,
+            sources: [
+                .selection: source ?? FakeNarrationSource(),
+                .clipboard: clipboard ?? FakeNarrationSource(),
+            ],
+            synthesizer: synthesizer ?? FakeSpeechSynthesizer(),
             providers: LLMProviderRegistry(all: provider.map { [$0] } ?? []),
             secrets: InMemorySecretStore(secrets),
             chunker: NarrationChunker(maxCharacters: 40, minCharacters: 20),
@@ -277,6 +284,37 @@ struct NarrationCoordinatorTests {
         coordinator.stop()
         #expect(coordinator.state == .idle)
         #expect(synthesizer.stopCount == 1)
+    }
+
+    @Test("the clipboard shortcut reads the clipboard, not the selection")
+    func clipboardSourceIsSeparate() async {
+        // An agent's answer usually arrives via its own copy button, so this path
+        // must not touch the selection reader at all.
+        let selection = FakeNarrationSource(text: "選択されているテキスト。")
+        let clipboard = FakeNarrationSource(text: "コピーされた回答。")
+        let synthesizer = FakeSpeechSynthesizer()
+        let coordinator = make(
+            source: selection,
+            clipboard: clipboard,
+            synthesizer: synthesizer
+        )
+
+        coordinator.start(source: .clipboard)
+        await coordinator.waitForRun()
+
+        #expect(synthesizer.spoken == ["コピーされた回答。"])
+        #expect(selection.readCount == 0)
+        #expect(coordinator.activeSource == .clipboard)
+    }
+
+    @Test("an empty clipboard says to copy something, not to select something")
+    func emptyClipboardHasItsOwnError() async {
+        let coordinator = make(clipboard: FakeNarrationSource(text: "  \n "))
+
+        coordinator.start(source: .clipboard)
+        await coordinator.waitForRun()
+
+        #expect(coordinator.state == .failed(.clipboardEmpty))
     }
 
     @Test("the speaking rate comes from settings")

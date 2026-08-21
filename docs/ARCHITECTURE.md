@@ -229,15 +229,15 @@ filtering did not correct anything; `docs/SECURITY.md` records the measurements 
 what the reversal costs. Core owns the truncation, fencing and inspection as pure
 functions; Platform owns only the capture.
 
-### 読み上げ: a second pipeline that starts at a selection
+### 読み上げ: a second pipeline that starts at text on screen
 
-Everything above starts at the microphone. Reading text aloud starts at a
-selection, so it gets its own coordinator rather than a `VoiceAction`:
+Everything above starts at the microphone. Reading text aloud starts at text the
+user already has, so it gets its own coordinator rather than a `VoiceAction`:
 
 ```mermaid
 flowchart LR
-    HK["Hotkey<br/>HotkeyPurpose.readAloud"] --> NC
-    SRC["SelectedTextReader<br/>⌘C + NSPasteboard"] --> NC
+    HK["Hotkey<br/>.readAloud / .readAloudClipboard"] --> NC
+    SRC["SelectedTextReader (⌘C)<br/>ClipboardTextReader"] --> NC
     NC["NarrationCoordinator<br/>@MainActor @Observable"] --> CH["NarrationChunker"]
     CH --> PB["ReadAloudPromptBuilder"]
     PB --> LLM["LLMProviderRegistry"]
@@ -265,9 +265,17 @@ chunk 2 arriving would look like the end of the reading.
 error all fall back to speaking the source text as it stands. This mirrors the
 dictation path, where a failed formatting call still delivers the transcript.
 
+**The source is chosen by the shortcut.** `NarrationCoordinator` holds one reader
+per `NarrationSourceID` and `HotkeyPurpose.narrationSource` says which one a press
+runs, so the app layer never picks. The two readers differ in what they cost the
+user: `SelectedTextReader` synthesises ⌘C and therefore needs the Accessibility
+permission, while `ClipboardTextReader` reads what an agent's own copy button
+already left behind and needs nothing. An empty source is reported per source
+(`nothingToRead` against `clipboardEmpty`), because the fix differs.
+
 Adding another source (OCR of the frontmost window, a URL) means another
-`NarrationSourceReading` in Platform and nothing else — the seam is deliberately
-that narrow.
+`NarrationSourceReading` in Platform, a case in `NarrationSourceID`, and nothing
+else — the seam is deliberately that narrow.
 
 ## Threading and actor rules
 

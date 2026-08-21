@@ -8,9 +8,21 @@ public enum HotkeyPurpose: Hashable, Sendable {
     case ask
     /// Dictate with one specific formatting style, for this dictation only.
     case style(UUID)
-    /// Read the current selection aloud. The one purpose that starts no recording
-    /// at all — see `NarrationCoordinator`.
+    /// Read the current selection aloud. Starts no recording at all — see
+    /// `NarrationCoordinator`.
     case readAloud
+    /// Read what is already on the clipboard aloud. Also no recording.
+    case readAloudClipboard
+
+    /// Which read-aloud source a press starts, or `nil` for a purpose that is a
+    /// dictation instead. Exactly one of this and `actionID` is non-nil.
+    public var narrationSource: NarrationSourceID? {
+        switch self {
+        case .readAloud: return .selection
+        case .readAloudClipboard: return .clipboard
+        case .dictation, .ask, .style: return nil
+        }
+    }
 
     public var styleID: UUID? {
         guard case .style(let id) = self else { return nil }
@@ -24,7 +36,7 @@ public enum HotkeyPurpose: Hashable, Sendable {
         switch self {
         case .dictation, .style: return .format
         case .ask: return .ask
-        case .readAloud: return nil
+        case .readAloud, .readAloudClipboard: return nil
         }
     }
 
@@ -37,6 +49,7 @@ public enum HotkeyPurpose: Hashable, Sendable {
         case .ask: return "ask"
         case .style: return "style"
         case .readAloud: return "readAloud"
+        case .readAloudClipboard: return "readAloudClipboard"
         }
     }
 }
@@ -97,22 +110,26 @@ public struct HotkeyPlan: Sendable, Equatable {
     public var askRejection: HotkeyRejection?
     /// Why the read-aloud shortcut was left unregistered, when one is configured.
     public var readAloudRejection: HotkeyRejection?
+    /// The same, for the shortcut that reads the clipboard.
+    public var readAloudClipboardRejection: HotkeyRejection?
 
     public init(
         assignments: [HotkeyAssignment],
         rejections: [UUID: HotkeyRejection],
         askRejection: HotkeyRejection? = nil,
-        readAloudRejection: HotkeyRejection? = nil
+        readAloudRejection: HotkeyRejection? = nil,
+        readAloudClipboardRejection: HotkeyRejection? = nil
     ) {
         self.assignments = assignments
         self.rejections = rejections
         self.askRejection = askRejection
         self.readAloudRejection = readAloudRejection
+        self.readAloudClipboardRejection = readAloudClipboardRejection
     }
 
     /// The main shortcut always wins: the question shortcut is considered next,
-    /// then read-aloud, then styles in the order they appear in Settings, and the
-    /// first claim on a combination keeps it.
+    /// then the two read-aloud shortcuts, then styles in the order they appear in
+    /// Settings, and the first claim on a combination keeps it.
     public static func make(for settings: AppSettings) -> HotkeyPlan {
         var assignments = [
             HotkeyAssignment(
@@ -125,6 +142,7 @@ public struct HotkeyPlan: Sendable, Equatable {
         var rejections: [UUID: HotkeyRejection] = [:]
         var askRejection: HotkeyRejection?
         var readAloudRejection: HotkeyRejection?
+        var readAloudClipboardRejection: HotkeyRejection?
 
         if let binding = settings.askHotkey {
             // Same rule as a style, for the same reason: the modifier-only path
@@ -166,6 +184,22 @@ public struct HotkeyPlan: Sendable, Equatable {
             }
         }
 
+        if let binding = settings.readAloudClipboardHotkey {
+            if binding.isModifierOnly {
+                readAloudClipboardRejection = .modifierOnlyUnsupported
+            } else if !claimed.insert(binding).inserted {
+                readAloudClipboardRejection = .duplicate(binding)
+            } else {
+                assignments.append(
+                    HotkeyAssignment(
+                        purpose: .readAloudClipboard,
+                        binding: binding,
+                        mode: .toggle
+                    )
+                )
+            }
+        }
+
         for style in settings.styles {
             guard let binding = style.hotkey else { continue }
             guard !binding.isModifierOnly else {
@@ -189,7 +223,8 @@ public struct HotkeyPlan: Sendable, Equatable {
             assignments: assignments,
             rejections: rejections,
             askRejection: askRejection,
-            readAloudRejection: readAloudRejection
+            readAloudRejection: readAloudRejection,
+            readAloudClipboardRejection: readAloudClipboardRejection
         )
     }
 }

@@ -112,6 +112,10 @@ public struct ReadAloudSettings: Codable, Sendable, Equatable {
     /// default, like `askHotkey`: an update must never claim a combination the
     /// user relies on.
     public var hotkey: HotkeyBinding?
+    /// Shortcut that reads what is already on the clipboard, without synthesising
+    /// ⌘C. Separate from `hotkey` rather than a mode, because the two are pressed
+    /// in different situations: this one follows an agent's own copy button.
+    public var clipboardHotkey: HotkeyBinding?
     /// Speaking pace. 0 slowest, 1 fastest, 0.5 the system's normal pace.
     public var rate: Double
     /// Run the text through the LLM before speaking it. Off means the source text
@@ -123,11 +127,13 @@ public struct ReadAloudSettings: Codable, Sendable, Equatable {
 
     public init(
         hotkey: HotkeyBinding? = nil,
+        clipboardHotkey: HotkeyBinding? = nil,
         rate: Double = 0.5,
         rewriteEnabled: Bool = true,
         voiceIdentifier: String? = nil
     ) {
         self.hotkey = hotkey
+        self.clipboardHotkey = clipboardHotkey
         self.rate = rate
         self.rewriteEnabled = rewriteEnabled
         self.voiceIdentifier = voiceIdentifier
@@ -254,6 +260,17 @@ public struct AppSettings: Codable, Sendable, Equatable {
     public var readAloudSettings: ReadAloudSettings {
         get { readAloud ?? ReadAloudSettings() }
         set { readAloud = newValue }
+    }
+
+    /// The shortcut that reads the clipboard aloud, or `nil` while it is
+    /// unconfigured.
+    public var readAloudClipboardHotkey: HotkeyBinding? {
+        get { readAloud?.clipboardHotkey }
+        set {
+            var value = readAloudSettings
+            value.clipboardHotkey = newValue
+            readAloud = value
+        }
     }
 
     /// The shortcut that reads the selection aloud, or `nil` while the feature is

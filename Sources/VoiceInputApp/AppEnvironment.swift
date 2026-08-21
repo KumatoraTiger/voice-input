@@ -88,6 +88,7 @@ final class AppEnvironment {
     var askHotkeyIssue: String?
     /// Non-nil while the configured read-aloud shortcut could not be claimed.
     var readAloudHotkeyIssue: String?
+    var readAloudClipboardHotkeyIssue: String?
     /// Non-nil when launch-at-login needs the user to do something.
     var loginItemNotice: String?
     /// The app that was frontmost when recording started, e.g. "Slack".
@@ -174,7 +175,10 @@ final class AppEnvironment {
         // rate or voice edited in Settings applies to the next reading and there is
         // still exactly one writer to the store.
         let narration = NarrationCoordinator(
-            source: SelectedTextReader(),
+            sources: [
+                .selection: SelectedTextReader(),
+                .clipboard: ClipboardTextReader(),
+            ],
             synthesizer: speech,
             providers: providers,
             secrets: secrets,
@@ -259,8 +263,8 @@ final class AppEnvironment {
     /// Reads the current selection aloud, or controls the reading in flight: the
     /// same press pauses, resumes, and cancels a reading that has not started
     /// speaking yet. See `NarrationCoordinator.toggle`.
-    func toggleReadAloud() {
-        narration.toggle()
+    func toggleReadAloud(source: NarrationSourceID = .selection) {
+        narration.toggle(source: source)
     }
 
     func stopReadAloud() {
@@ -271,6 +275,12 @@ final class AppEnvironment {
     /// the menu says so rather than showing an empty key.
     var readAloudHotkeyLabel: String? {
         settings.readAloudHotkey.map(HotkeyFormatting.displayString(for:))
+    }
+
+    /// `nil` when no clipboard shortcut is configured. The menu item works either
+    /// way; only the key hint disappears.
+    var readAloudClipboardHotkeyLabel: String? {
+        settings.readAloudClipboardHotkey.map(HotkeyFormatting.displayString(for:))
     }
 
     /// Switches the style of the dictation in flight (from the HUD). One-off: the
@@ -428,6 +438,14 @@ final class AppEnvironment {
             ?? hotkeys.failures[.readAloud].map {
                 $0.errorDescription ?? "ショートカットキーを登録できませんでした。"
             }
+
+        readAloudClipboardHotkeyIssue =
+            plan.readAloudClipboardRejection?.message(
+                subject: "クリップボード読み上げのショートカット"
+            )
+            ?? hotkeys.failures[.readAloudClipboard].map {
+                $0.errorDescription ?? "ショートカットキーを登録できませんでした。"
+            }
     }
 
     private func message(for error: HotkeyError, binding: HotkeyBinding) -> String {
@@ -461,10 +479,11 @@ final class AppEnvironment {
         )
         // A purpose with no dictation action is not a recording at all. Read-aloud
         // is the only one today, and it must not touch the capture path.
-        guard let actionID = purpose.actionID else {
-            narration.toggle()
+        if let source = purpose.narrationSource {
+            narration.toggle(source: source)
             return
         }
+        guard let actionID = purpose.actionID else { return }
         rememberFrontmostApp()
         switch settings.hotkeyMode {
         case .toggle:

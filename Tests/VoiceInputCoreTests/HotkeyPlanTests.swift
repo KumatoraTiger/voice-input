@@ -209,6 +209,47 @@ struct HotkeyPlanTests {
         #expect(plan.assignments.allSatisfy { $0.mode == .pushToTalk })
     }
 
+    // MARK: The read-aloud shortcuts
+
+    @Test("each read-aloud purpose starts no dictation and names its source")
+    func readAloudPurposes() {
+        #expect(HotkeyPurpose.readAloud.actionID == nil)
+        #expect(HotkeyPurpose.readAloudClipboard.actionID == nil)
+        #expect(HotkeyPurpose.readAloud.narrationSource == .selection)
+        #expect(HotkeyPurpose.readAloudClipboard.narrationSource == .clipboard)
+        #expect(HotkeyPurpose.dictation.narrationSource == nil)
+        #expect(HotkeyPurpose.ask.narrationSource == nil)
+    }
+
+    @Test("both read-aloud shortcuts are planned, and always as toggles")
+    func readAloudShortcutsArePlanned() {
+        var settings = AppSettings()
+        settings.hotkeyMode = .pushToTalk
+        settings.readAloudHotkey = HotkeyBinding(keyCode: 19, modifiers: 1 << 12)
+        settings.readAloudClipboardHotkey = HotkeyBinding(keyCode: 20, modifiers: 1 << 12)
+
+        let plan = HotkeyPlan.make(for: settings)
+
+        #expect(plan.assignments.map(\.purpose) == [.dictation, .readAloud, .readAloudClipboard])
+        // Push-to-talk is meaningless for a reading that outlives the press.
+        #expect(plan.assignments.last?.mode == .toggle)
+        #expect(plan.readAloudRejection == nil)
+        #expect(plan.readAloudClipboardRejection == nil)
+    }
+
+    @Test("the clipboard shortcut is rejected when it repeats the selection one")
+    func readAloudShortcutsCollide() {
+        let binding = HotkeyBinding(keyCode: 19, modifiers: 1 << 12)
+        var settings = AppSettings()
+        settings.readAloudHotkey = binding
+        settings.readAloudClipboardHotkey = binding
+
+        let plan = HotkeyPlan.make(for: settings)
+
+        #expect(plan.assignments.map(\.purpose) == [.dictation, .readAloud])
+        #expect(plan.readAloudClipboardRejection == .duplicate(binding))
+    }
+
     @Test("a rejection can be worded for the shortcut it belongs to")
     func rejectionWording() {
         let rejection = HotkeyRejection.modifierOnlyUnsupported

@@ -3,8 +3,9 @@ import SwiftUI
 import VoiceInputCore
 import VoiceInputPlatform
 
-/// The 読み上げ pane: the shortcut that reads the selection aloud, whether the LLM
-/// rewrites it first, and which system voice reads it.
+/// The 読み上げ pane: the two shortcuts that start a reading (the selection and the
+/// clipboard), whether the LLM rewrites the text first, and which system voice
+/// reads it.
 struct ReadAloudSettingsView: View {
     @Environment(AppEnvironment.self) private var environment
 
@@ -12,7 +13,7 @@ struct ReadAloudSettingsView: View {
         @Bindable var environment = environment
 
         SettingsPane {
-            Section("ショートカット") {
+            Section("選択テキストのショートカット") {
                 LabeledContent("キー") {
                     HotkeyRecorderField(binding: $environment.settings.readAloudHotkey)
                 }
@@ -24,7 +25,7 @@ struct ReadAloudSettingsView: View {
                 }
                 Text(
                     "テキストを選択してこのキーを押すと、読み上げやすい形に整えてから読み上げます。"
-                        + "未設定のあいだは読み上げ機能は動きません。"
+                        + "未設定のあいだは、このキーでの読み上げは動きません。"
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -33,6 +34,35 @@ struct ReadAloudSettingsView: View {
                     "読み上げ中に押すと一時停止、もう一度押すと再開します。"
                         + "選択範囲の取得には ⌘C を送るため、アクセシビリティの許可が必要です"
                         + "（クリップボードは読み取り後に元に戻します）。"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Section("クリップボードのショートカット") {
+                LabeledContent("キー") {
+                    HotkeyRecorderField(
+                        binding: $environment.settings.readAloudClipboardHotkey
+                    )
+                }
+                if let issue = environment.readAloudClipboardHotkeyIssue {
+                    Label(issue, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Text(
+                    "いまクリップボードに入っているテキストを読み上げます。"
+                        + "AI エージェントやチャットの回答には、たいてい回答ごとのコピーボタンがあるので、"
+                        + "それを押してからこのキーを押すのがいちばん速い経路です。"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                Text(
+                    "⌘C を送らないので、アクセシビリティの許可は不要です。"
+                        + "クリップボードは読み取るだけで、書き換えません。"
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)

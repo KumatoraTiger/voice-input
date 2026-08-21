@@ -33,6 +33,12 @@ struct MenuContent: View {
             environment.toggleReadAloud()
         }
 
+        if !environment.narration.state.isActive {
+            Button(clipboardReadAloudTitle) {
+                environment.toggleReadAloud(source: .clipboard)
+            }
+        }
+
         if environment.narration.state.isActive {
             Button("読み上げを停止") { environment.stopReadAloud() }
         }
@@ -45,6 +51,9 @@ struct MenuContent: View {
         }
         if let readAloudIssue = environment.readAloudHotkeyIssue {
             Text("読み上げ: \(readAloudIssue.truncated(to: 70))")
+        }
+        if let clipboardIssue = environment.readAloudClipboardHotkeyIssue {
+            Text("クリップボード読み上げ: \(clipboardIssue.truncated(to: 60))")
         }
 
         Divider()
@@ -154,6 +163,13 @@ struct MenuContent: View {
         case .failed(let error):
             return "読み上げ: \((error.errorDescription ?? "失敗しました").truncated(to: 50))"
         }
+    }
+
+    /// Only shown while nothing is being read, so it never has to double as a
+    /// pause button — the row above already is one.
+    private var clipboardReadAloudTitle: String {
+        let suffix = environment.readAloudClipboardHotkeyLabel.map { "（\($0)）" } ?? ""
+        return "クリップボードを読み上げ\(suffix)"
     }
 
     /// While transcribing or formatting there is nothing to start or stop.
