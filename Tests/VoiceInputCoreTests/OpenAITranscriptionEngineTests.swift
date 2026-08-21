@@ -145,7 +145,7 @@ struct OpenAITranscriptionEngineTests {
         await #expect {
             _ = try await session.finish()
         } throws: { error in
-            guard case let .transcriptionFailed(detail) = error as? VoiceInputError else {
+            guard case .transcriptionFailed(let detail) = error as? VoiceInputError else {
                 return false
             }
             return detail.contains("長すぎます")
@@ -178,7 +178,7 @@ struct OpenAITranscriptionEngineTests {
                 configuration: TranscriptionConfiguration(locale: Locale(identifier: "ja-JP"))
             )
         } throws: { error in
-            guard case let .engineUnavailable(id, _) = error as? VoiceInputError else {
+            guard case .engineUnavailable(let id, _) = error as? VoiceInputError else {
                 return false
             }
             return id == .openAICloud

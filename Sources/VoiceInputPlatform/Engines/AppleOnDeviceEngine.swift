@@ -235,8 +235,10 @@ private final class AppleOnDeviceSession: TranscriptionSession, @unchecked Senda
         guard let request else { throw VoiceInputError.cancelled }
 
         let (segments, partials, banked, buffers, resolved) = locked {
-            (segmentCount, partialCount, finalizedSegments.count, appendedBuffers,
-                pendingResult != nil)
+            (
+                segmentCount, partialCount, finalizedSegments.count, appendedBuffers,
+                pendingResult != nil
+            )
         }
         Self.log.notice(
             """

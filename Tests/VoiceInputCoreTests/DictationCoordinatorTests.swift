@@ -653,11 +653,11 @@ struct DictationCoordinatorTests {
         coordinator.start()
         await coordinator.waitUntilIdle()
 
-        guard case let .failed(error) = coordinator.state else {
+        guard case .failed(let error) = coordinator.state else {
             Issue.record("expected .failed, got \(coordinator.state)")
             return
         }
-        guard case let .engineUnavailable(_, detail) = error else {
+        guard case .engineUnavailable(_, let detail) = error else {
             Issue.record("expected .engineUnavailable, got \(error)")
             return
         }

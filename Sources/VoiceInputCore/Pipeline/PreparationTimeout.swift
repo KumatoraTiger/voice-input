@@ -23,8 +23,9 @@ enum PreparationTimeout {
                 race.register(
                     Task {
                         let result: Result<T, Error>
-                        do { result = .success(try await operation()) }
-                        catch { result = .failure(error) }
+                        do { result = .success(try await operation()) } catch {
+                            result = .failure(error)
+                        }
                         if !race.finish(result), case .success(let value) = result {
                             onAbandonedResult(value)
                         }

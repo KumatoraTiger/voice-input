@@ -162,8 +162,9 @@ struct GeminiProviderTests {
     func qualifiedModelName() {
         let base = URL(string: "https://example.invalid/v1beta")!
         let expected = "https://example.invalid/v1beta/models/gemini-3.5-flash:generateContent"
-        #expect(GeminiProvider.endpoint(base: base, model: "gemini-3.5-flash")?.absoluteString
-            == expected)
+        #expect(
+            GeminiProvider.endpoint(base: base, model: "gemini-3.5-flash")?.absoluteString
+                == expected)
         #expect(
             GeminiProvider.endpoint(base: base, model: "models/gemini-3.5-flash")?.absoluteString
                 == expected)
@@ -203,7 +204,8 @@ struct GeminiProviderTests {
         await #expect {
             _ = try await provider.send(request(), apiKey: "test-key")
         } throws: { error in
-            guard case let .providerHTTPError(name, status, body) = error as? VoiceInputError
+            guard
+                case .providerHTTPError(let name, let status, let body) = error as? VoiceInputError
             else { return false }
             return name == "Google Gemini" && status == 400 && body.contains("API key not valid")
         }
@@ -219,7 +221,7 @@ struct GeminiProviderTests {
         await #expect {
             _ = try await provider.send(request(), apiKey: "test-key")
         } throws: { error in
-            guard case let .providerDecodingFailed(name, detail) = error as? VoiceInputError
+            guard case .providerDecodingFailed(let name, let detail) = error as? VoiceInputError
             else { return false }
             return name == "Google Gemini" && detail.contains("MAX_TOKENS")
         }
@@ -235,7 +237,7 @@ struct GeminiProviderTests {
         await #expect {
             _ = try await provider.send(request(), apiKey: "test-key")
         } throws: { error in
-            guard case let .providerDecodingFailed(name, _) = error as? VoiceInputError
+            guard case .providerDecodingFailed(let name, _) = error as? VoiceInputError
             else { return false }
             return name == "Google Gemini"
         }
@@ -251,7 +253,7 @@ struct GeminiProviderTests {
         await #expect {
             _ = try await provider.send(request(), apiKey: "test-key")
         } throws: { error in
-            guard case let .providerDecodingFailed(name, _) = error as? VoiceInputError
+            guard case .providerDecodingFailed(let name, _) = error as? VoiceInputError
             else { return false }
             return name == "Google Gemini"
         }

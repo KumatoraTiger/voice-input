@@ -71,7 +71,8 @@ struct OpenAIProviderTests {
         await #expect {
             _ = try await provider.send(request, apiKey: "sk-test")
         } throws: { error in
-            guard case let .providerHTTPError(name, status, body) = error as? VoiceInputError
+            guard
+                case .providerHTTPError(let name, let status, let body) = error as? VoiceInputError
             else { return false }
             return name == "OpenAI"
                 && status == 429
@@ -88,7 +89,7 @@ struct OpenAIProviderTests {
         await #expect {
             _ = try await provider.send(request, apiKey: "sk-test")
         } throws: { error in
-            guard case let .providerDecodingFailed(name, _) = error as? VoiceInputError
+            guard case .providerDecodingFailed(let name, _) = error as? VoiceInputError
             else { return false }
             return name == "OpenAI"
         }
